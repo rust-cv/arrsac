@@ -5,6 +5,7 @@ use sample_consensus::{Consensus, Estimator, EstimatorData, Model};
 struct Arrsac {
     max_candidate_hypothesis: usize,
     block_size: usize,
+    probability_of_rejecting_good_model: f32,
 }
 
 impl<E> Consensus<E> for Arrsac
@@ -39,7 +40,7 @@ impl Iterator for Inliers {
 ///
 /// `positive_likelyhood` - `δ / ε`
 /// `negative_likelyhood` - `(1 - δ) / (1 - ε)`
-fn likelyhood_ratio<'a, M: Model>(
+pub fn likelyhood_ratio<'a, M: Model>(
     data: impl Iterator<Item = &'a M::Data>,
     model: &M,
     threshold: f32,
@@ -49,12 +50,13 @@ fn likelyhood_ratio<'a, M: Model>(
 where
     M::Data: 'a,
 {
-    data.map(|data| {
+    let (inliers, outliers) = data.fold((0, 0), |(inliers, outliers), data| {
         if model.residual(data) < threshold {
-            positive_likelyhood
+            (inliers + 1, outliers)
         } else {
-            negative_likelyhood
+            (inliers, outliers + 1)
         }
-    })
-    .product()
+    });
+
+    positive_likelyhood.powi(inliers) * negative_likelyhood.powi(outliers)
 }
