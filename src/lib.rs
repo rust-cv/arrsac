@@ -36,27 +36,35 @@ impl Iterator for Inliers {
 
 /// Algorithm 1 in "Randomized RANSAC with Sequential Probability Ratio Test".
 ///
-/// Items with a residual error less than `threshold` are considered inliers.
+/// This tests if a model is accepted. Returns `true` on accepted and `false` on rejected.
 ///
-/// `positive_likelyhood` - `δ / ε`
-/// `negative_likelyhood` - `(1 - δ) / (1 - ε)`
-pub fn likelyhood_ratio<'a, M: Model>(
+/// `inlier_threshold` - The model residual error threshold between inliers and outliers
+/// `positive_likelyhood_ratio` - `δ / ε`
+/// `negative_likelyhood_ratio` - `(1 - δ) / (1 - ε)`
+/// `likelyhood_ratio_threshold` - The parameter `A` in the paper.
+pub fn adapted_sprt<'a, M: Model>(
     data: impl Iterator<Item = &'a M::Data>,
     model: &M,
-    threshold: f32,
-    positive_likelyhood: f32,
-    negative_likelyhood: f32,
-) -> f32
+    inlier_threshold: f32,
+    positive_likelyhood_ratio: f32,
+    negative_likelyhood_ratio: f32,
+    likelyhood_ratio_threshold: f32,
+) -> bool
 where
     M::Data: 'a,
 {
-    let (inliers, outliers) = data.fold((0, 0), |(inliers, outliers), data| {
-        if model.residual(data) < threshold {
-            (inliers + 1, outliers)
+    let mut likelyhood_ratio = 1.0;
+    for data in data {
+        likelyhood_ratio *= if model.residual(data) < inlier_threshold {
+            positive_likelyhood_ratio
         } else {
-            (inliers, outliers + 1)
-        }
-    });
+            negative_likelyhood_ratio
+        };
 
-    positive_likelyhood.powi(inliers) * negative_likelyhood.powi(outliers)
+        if likelyhood_ratio > likelyhood_ratio_threshold {
+            return false;
+        }
+    }
+
+    true
 }
