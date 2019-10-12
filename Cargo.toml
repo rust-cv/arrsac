@@ -5,4 +5,4 @@ authors = ["Geordon Worley <vadixidav@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-sample-consensus = { git = "https://github.com/rust-photogrammetry/sample-consensus", rev = "31f3596e5cd57e60647a86a0dd675cc000268dcb" }
+sample-consensus = { git = "https://github.com/rust-photogrammetry/sample-consensus" }
