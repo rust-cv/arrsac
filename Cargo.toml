@@ -6,3 +6,4 @@ edition = "2018"
 
 [dependencies]
 sample-consensus = { git = "https://github.com/rust-photogrammetry/sample-consensus" }
+rand = { version = "0.7.2", default-features = false }
