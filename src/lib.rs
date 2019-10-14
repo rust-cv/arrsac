@@ -72,7 +72,7 @@ where
         let mut total_delta_inliers = 0;
         let mut inlier_indices = vec![];
         let random_hypotheses: Vec<_> = (0..self.max_candidate_hypothesis)
-            .flat_map(|_| self.generate_random_hypothesis(data, estimator))
+            .flat_map(|_| self.generate_random_hypotheses(data, estimator))
             .collect();
         for model in random_hypotheses {
             // Check if the model satisfies the ASPRT test.
@@ -122,17 +122,17 @@ where
     /// ARRSAC uses the PROSAC algorithm for sampling in a way that favors stronger data.
     /// This method still works great, but eventually we should support random sampling that accounts
     /// for strength of data points.
-    fn generate_random_hypothesis<E>(
+    fn generate_random_hypotheses<E>(
         &mut self,
         data: &[EstimatorData<E>],
         estimator: &E,
-    ) -> Option<E::Model>
+    ) -> E::ModelIter
     where
         E: Estimator,
     {
         // We can generate no hypotheses if the amout of data is too low.
         if data.len() < E::MIN_SAMPLES {
-            return None;
+            panic!("cannot call generate_random_hypotheses without having enough samples");
         }
         let mut random_samples = vec![0; E::MIN_SAMPLES];
         for n in 0..E::MIN_SAMPLES {
