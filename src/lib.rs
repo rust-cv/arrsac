@@ -299,7 +299,6 @@ where
         // Generate the initial set of hypotheses. This also gets us an estimate of epsilon and delta.
         // We only want to give it one block size of data for the initial generation.
         let (mut hypotheses, _, delta) = self.initial_hypotheses(estimator, data);
-        let inital_num_hypotheses = hypotheses.len();
 
         // Retain the hypotheses the initial time. This is done before the loop to ensure that if the
         // number of datapoints is too low and the for loop never executes that the best model is returned.
@@ -312,6 +311,9 @@ where
 
         // Gradually increase how many datapoints we are evaluating until we evaluate them all.
         for num_data in self.block_size + 1..=data.len() {
+            if hypotheses.len() <= 1 {
+                break;
+            }
             // Score the hypotheses with the new datapoint.
             let new_datapoint = &data[num_data - 1];
             for (hypothesis, inlier_count) in hypotheses.iter_mut() {
@@ -332,7 +334,7 @@ where
                 let inliers = self.inliers(data.iter(), &hypotheses[0].0);
                 // We generate hypotheses until we reach the initial num hypotheses.
                 let mut random_hypotheses = vec![];
-                while hypotheses.len() < inital_num_hypotheses {
+                for _ in 0..self.max_candidate_hypothesis {
                     random_hypotheses
                         .extend(self.generate_random_hypotheses_subset(estimator, data, &inliers));
                     for model in random_hypotheses.drain(..) {
@@ -351,9 +353,6 @@ where
             // This will retain at least half of the hypotheses each time
             // and gradually decrease as the number of samples we are evaluating increases.
             self.retain_hypotheses(num_data, &mut hypotheses);
-            if hypotheses.len() <= 1 {
-                break;
-            }
         }
         hypotheses.into_iter().next().map(|(model, _)| {
             let inliers = self.inliers(data.iter(), &model);
