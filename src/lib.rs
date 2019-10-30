@@ -228,14 +228,24 @@ where
         (true, inliers)
     }
 
-    /// This function tells you how many models should be retained to include data item `i`.
-    fn num_to_retain(&self, item: usize, remaining: usize) -> usize {
+    /// This function sorts and retains the correct number of hypotheses when evaluating data item `i`.
+    fn retain_hypotheses<M>(&self, item: usize, hypotheses: &mut Vec<(M, usize)>) {
         // TODO: See if there is some way to re-write this to include no floating-point math.
-        std::cmp::min(
-            remaining / 2,
+        // TODO: I am going against what the paper says by using max here instead of min,
+        // but with min this makes absolutely no sense since in a block size of 100
+        // it will be guaranteed to terminate because log2(initial_hypotheses) << 100.
+        // I am making an executive decision to assume that this is a max instead of a min.
+        let num_retain = std::cmp::max(
+            hypotheses.len() / 2,
             (self.max_candidate_hypothesis as f32
                 * 2.0f32.powf(-(item as f32) / self.block_size as f32)) as usize,
-        )
+        );
+        // We need to sort the hypotheses based on how good they are (number inliers).
+        // The best hypotheses go to the beginning.
+        hypotheses.sort_unstable_by_key(|&(_, inliers)| -(inliers as isize));
+        hypotheses.resize_with(num_retain, || {
+            panic!("Arrsac::models should never resize the hypotheses to be higher");
+        });
     }
 
     /// Determines the number of inliers a model has.
@@ -261,8 +271,8 @@ where
         M::Data: 'a,
     {
         data.enumerate()
-            .filter(|(ix, data)| model.residual(data) < self.inlier_threshold)
-            .map(|(ix, data)| ix)
+            .filter(|(_, data)| model.residual(data) < self.inlier_threshold)
+            .map(|(ix, _)| ix)
             .collect()
     }
 }
@@ -275,7 +285,7 @@ where
     type Inliers = Vec<usize>;
 
     fn model(&mut self, estimator: &E, data: &[EstimatorData<E>]) -> Option<E::Model> {
-        unimplemented!()
+        self.model_inliers(estimator, data).map(|(model, _)| model)
     }
 
     fn model_inliers(
@@ -285,23 +295,20 @@ where
     ) -> Option<(E::Model, Self::Inliers)> {
         // Generate the initial set of hypotheses. This also gets us an estimate of epsilon and delta.
         // We only want to give it one block size of data for the initial generation.
-        let (mut hypotheses, mut epsilon, mut delta) = self.initial_hypotheses(estimator, data);
+        let (mut hypotheses, _, delta) = self.initial_hypotheses(estimator, data);
         let inital_num_hypotheses = hypotheses.len();
 
+        // Retain the hypotheses the initial time. This is done before the loop to ensure that if the
+        // number of datapoints is too low and the for loop never executes that the best model is returned.
+        self.retain_hypotheses(self.block_size, &mut hypotheses);
+
+        // If there are no initial hypotheses then don't bother doing anything.
+        if hypotheses.is_empty() {
+            return None;
+        }
+
         // Gradually increase how many datapoints we are evaluating until we evaluate them all.
-        for num_data in self.block_size + 1..data.len() {
-            // This will retain no more than half of the hypotheses each time
-            // and gradually decrease as the number of samples we are evaluating increases.
-            let retain = self.num_to_retain(num_data, hypotheses.len());
-            // We need to sort the hypotheses based on how good they are (number inliers).
-            // The best hypotheses go to the beginning.
-            hypotheses.sort_unstable_by_key(|&(_, inliers)| -(inliers as isize));
-            hypotheses.resize_with(retain, || {
-                panic!("Arrsac::models should never resize the hypotheses to be higher");
-            });
-            if hypotheses.len() <= 1 {
-                break;
-            }
+        for num_data in self.block_size + 1..=data.len() {
             // Score the hypotheses with the new datapoint.
             let new_datapoint = &data[num_data - 1];
             for (hypothesis, inlier_count) in hypotheses.iter_mut() {
@@ -314,12 +321,35 @@ where
                 // First, update epsilon using the best model.
                 // Technically model 0 might no longer be the best model after evaluating the last data-point,
                 // but that is not that important.
-                epsilon = hypotheses[0].1 as f32 / num_data as f32;
+                let epsilon = hypotheses[0].1 as f32 / num_data as f32;
                 // Create the likelyhood ratios for inliers and outliers.
                 let positive_likelyhood_ratio = delta / epsilon;
                 let negative_likelyhood_ratio = (1.0 - delta) / (1.0 - epsilon);
-                // We generate hypotheses until we reach the max candidate hypotheses.
-                if hypotheses.len() < self.max_candidate_hypothesis {}
+                // Generate the list of inliers for the best model.
+                let inliers = self.inliers(data.iter(), &hypotheses[0].0);
+                // We generate hypotheses until we reach the initial num hypotheses.
+                let mut random_hypotheses = vec![];
+                while hypotheses.len() < inital_num_hypotheses {
+                    random_hypotheses
+                        .extend(self.generate_random_hypotheses_subset(estimator, data, &inliers));
+                    for model in random_hypotheses.drain(..) {
+                        let (pass, inliers) = self.asprt(
+                            data[..num_data].iter(),
+                            &model,
+                            positive_likelyhood_ratio,
+                            negative_likelyhood_ratio,
+                        );
+                        if pass {
+                            hypotheses.push((model, inliers));
+                        }
+                    }
+                }
+            }
+            // This will retain at least half of the hypotheses each time
+            // and gradually decrease as the number of samples we are evaluating increases.
+            self.retain_hypotheses(num_data, &mut hypotheses);
+            if hypotheses.len() <= 1 {
+                break;
             }
         }
         hypotheses.into_iter().next().map(|(model, _)| {
