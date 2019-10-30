@@ -73,60 +73,74 @@ where
         let mut negative_likelyhood_ratio = (1.0 - delta) / (1.0 - epsilon);
         let mut current_delta_estimations = 0;
         let mut total_delta_inliers = 0;
-        let mut inlier_indices = vec![];
-        // Generate the random hypotheses using all the data, not just the evaluation data.
-        let random_hypotheses: Vec<_> = (0..self.max_candidate_hypothesis)
-            .flat_map(|_| self.generate_random_hypotheses(estimator, data))
-            .collect();
+        let mut best_inlier_indices = vec![];
+        let mut random_hypotheses = vec![];
+        // Lets us know if we found a candidate hypothesis that actually has enough inliers for us to generate a model from.
+        let mut found_usable_hypothesis = false;
         // Iterate through all the randomly generated hypotheses to update epsilon and delta while finding good models.
-        for model in random_hypotheses {
-            // Check if the model satisfies the ASPRT test on only `inital_datapoints` evaluation data.
-            let (pass, inliers) = self.asprt(
-                data[..initial_datapoints].iter(),
-                &model,
-                positive_likelyhood_ratio,
-                negative_likelyhood_ratio,
-            );
-            if pass {
-                // If this has the largest support (most inliers) then we update the
-                // approximation of epsilon.
-                if inliers > best_inliers {
-                    best_inliers = inliers;
-                    // Update epsilon (this can only increase, since there are more inliers).
-                    epsilon = inliers as f32 / data.len() as f32;
-                    // Will decrease positive likelyhood ratio.
-                    positive_likelyhood_ratio = delta / epsilon;
-                    // Will increase negative likelyhood ratio.
-                    negative_likelyhood_ratio = (1.0 - delta) / (1.0 - epsilon);
+        for _ in 0..self.max_candidate_hypothesis {
+            if found_usable_hypothesis {
+                // If we have found a hypothesis that has a sufficient number of inliers, we randomly sample from its inliers
+                // to generate new hypotheses since that is much more likely to generate good ones.
+                random_hypotheses.extend(self.generate_random_hypotheses_subset(
+                    estimator,
+                    data,
+                    &best_inlier_indices,
+                ));
+            } else {
+                // Generate the random hypotheses using all the data, not just the evaluation data.
+                random_hypotheses.extend(self.generate_random_hypotheses(estimator, data));
+            }
+            for model in random_hypotheses.drain(..) {
+                // Check if the model satisfies the ASPRT test on only `inital_datapoints` evaluation data.
+                let (pass, inliers) = self.asprt(
+                    data[..initial_datapoints].iter(),
+                    &model,
+                    positive_likelyhood_ratio,
+                    negative_likelyhood_ratio,
+                );
+                if pass {
+                    // If this has the largest support (most inliers) then we update the
+                    // approximation of epsilon.
+                    if inliers > best_inliers {
+                        best_inliers = inliers;
+                        // Update epsilon (this can only increase, since there are more inliers).
+                        epsilon = inliers as f32 / data.len() as f32;
+                        // Will decrease positive likelyhood ratio.
+                        positive_likelyhood_ratio = delta / epsilon;
+                        // Will increase negative likelyhood ratio.
+                        negative_likelyhood_ratio = (1.0 - delta) / (1.0 - epsilon);
 
-                    // Update the inlier indices.
-                    inlier_indices = self.inliers(data.iter(), &model);
+                        // We only want to mark the hypothesis as usable if the inliers can generate a model.
+                        // Some models might be incredibly low on inliers and we can't accept them.
+                        if inliers > E::MIN_SAMPLES {
+                            // Update the inlier indices appropriately.
+                            best_inlier_indices = self.inliers(data.iter(), &model);
+                            // Mark that a usable hypothesis has been found.
+                            found_usable_hypothesis = true;
+                        }
+                    }
+                    hypotheses.push((model, inliers));
+                } else if current_delta_estimations < self.max_delta_estimations {
+                    // We want to add the information about inliers to our estimation of delta.
+                    // We only do this up to `max_delta_estimations` times to avoid wasting too much time.
+                    total_delta_inliers += self.count_inliers(data.iter(), &model);
+                    current_delta_estimations += 1;
+                    // Update delta.
+                    delta = total_delta_inliers as f32
+                        / (current_delta_estimations * data.len()) as f32;
+                    // May change positive likelyhood ratio.
+                    positive_likelyhood_ratio = delta / epsilon;
+                    // May change negative likelyhood ratio.
+                    negative_likelyhood_ratio = (1.0 - delta) / (1.0 - epsilon);
                 }
-                hypotheses.push((model, inliers));
-            } else if current_delta_estimations < self.max_delta_estimations {
-                // We want to add the information about inliers to our estimation of delta.
-                // We only do this up to `max_delta_estimations` times to avoid wasting too much time.
-                total_delta_inliers += self.count_inliers(data.iter(), &model);
-                current_delta_estimations += 1;
-                // Update delta.
-                delta =
-                    total_delta_inliers as f32 / (current_delta_estimations * data.len()) as f32;
-                // May change positive likelyhood ratio.
-                positive_likelyhood_ratio = delta / epsilon;
-                // May change negative likelyhood ratio.
-                negative_likelyhood_ratio = (1.0 - delta) / (1.0 - epsilon);
             }
         }
 
         (hypotheses, epsilon, delta)
     }
 
-    /// Generate a random hypothesis
-    ///
-    /// TODO: This generates totally random hypotheses without accounting for strength of data points.
-    /// ARRSAC uses the PROSAC algorithm for sampling in a way that favors stronger data.
-    /// This method still works great, but eventually we should support random sampling that accounts
-    /// for strength of data points.
+    /// Generates as many hypotheses as one call to `Estimator::estimate()` returns from all data.
     fn generate_random_hypotheses<E>(
         &mut self,
         estimator: &E,
@@ -143,13 +157,40 @@ where
         for n in 0..E::MIN_SAMPLES {
             loop {
                 let s = self.rng.gen_range(0, data.len());
-                if !random_samples[0..n].contains(&s) {
+                if !random_samples[..n].contains(&s) {
                     random_samples[n] = s;
                     break;
                 }
             }
         }
         estimator.estimate(random_samples.iter().map(|&ix| &data[ix]))
+    }
+
+    /// Generates as many hypotheses as one call to `Estimator::estimate()` returns from a subset of the data.
+    fn generate_random_hypotheses_subset<E>(
+        &mut self,
+        estimator: &E,
+        data: &[EstimatorData<E>],
+        subset: &[usize],
+    ) -> E::ModelIter
+    where
+        E: Estimator,
+    {
+        // We can generate no hypotheses if the amout of data is too low.
+        if subset.len() < E::MIN_SAMPLES {
+            panic!("cannot call generate_random_hypotheses_subset without having enough samples");
+        }
+        let mut random_samples = vec![0; E::MIN_SAMPLES];
+        for n in 0..E::MIN_SAMPLES {
+            loop {
+                let s = self.rng.gen_range(0, subset.len());
+                if !random_samples[..n].contains(&s) {
+                    random_samples[n] = s;
+                    break;
+                }
+            }
+        }
+        estimator.estimate(random_samples.iter().map(|&ix| &data[subset[ix]]))
     }
 
     /// Algorithm 1 in "Randomized RANSAC with Sequential Probability Ratio Test".
