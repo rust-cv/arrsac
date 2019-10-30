@@ -288,6 +288,10 @@ where
         estimator: &E,
         data: &[EstimatorData<E>],
     ) -> Option<(E::Model, Self::Inliers)> {
+        // Don't do anything if we don't have enough data.
+        if data.len() < E::MIN_SAMPLES {
+            return None;
+        }
         // Generate the initial set of hypotheses. This also gets us an estimate of epsilon and delta.
         // We only want to give it one block size of data for the initial generation.
         let (mut hypotheses, _, delta) = self.initial_hypotheses(estimator, data);
