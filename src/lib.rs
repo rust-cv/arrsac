@@ -1,5 +1,3 @@
-#![feature(type_alias_impl_trait)]
-
 use rand::Rng;
 use sample_consensus::{Consensus, Estimator, EstimatorData, Model};
 use std::vec;
