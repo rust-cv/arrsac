@@ -230,10 +230,14 @@ where
         // but with min this makes absolutely no sense since in a block size of 100
         // it will be guaranteed to terminate because log2(initial_hypotheses) << 100.
         // I am making an executive decision to assume that this is a max instead of a min.
-        let num_retain = std::cmp::max(
-            hypotheses.len() / 2,
-            (self.max_candidate_hypothesis as f32
-                * 2.0f32.powf(-(item as f32) / self.block_size as f32)) as usize,
+        let num_retain = std::cmp::min(
+            hypotheses.len(),
+            std::cmp::max(
+                hypotheses.len() / 2,
+                (self.max_candidate_hypothesis as f32
+                    * 2.0f32.powf(-(item as f32) / self.block_size as f32))
+                    as usize,
+            ),
         );
         // We need to sort the hypotheses based on how good they are (number inliers).
         // The best hypotheses go to the beginning.
