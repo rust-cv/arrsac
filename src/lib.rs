@@ -2,9 +2,9 @@
 
 use rand::Rng;
 use sample_consensus::{Consensus, Estimator, EstimatorData, Model};
+use std::vec;
 
 pub struct Arrsac<R> {
-    max_iterations: usize,
     max_candidate_hypothesis: usize,
     block_size: usize,
     max_delta_estimations: usize,
@@ -24,7 +24,6 @@ where
     /// without estimating. Increasing this will also make it less likely to accept a bad model.
     /// Set it to something like `0.01` for testing.
     pub fn new(
-        max_iterations: usize,
         max_candidate_hypothesis: usize,
         block_size: usize,
         max_delta_estimations: usize,
@@ -36,7 +35,6 @@ where
         rng: R,
     ) -> Self {
         Self {
-            max_iterations,
             max_candidate_hypothesis,
             block_size,
             max_delta_estimations,
@@ -53,31 +51,38 @@ where
     ///
     /// At least at present, this does not use the PROSAC method and instead does completely random sampling.
     ///
-    /// Returns the initial models, `epsilon`, and `delta` in that order.
+    /// Returns the initial models (and their num inliers), `epsilon`, and `delta` in that order.
     fn initial_hypotheses<E>(
         &mut self,
-        data: &[EstimatorData<E>],
         estimator: &E,
-    ) -> (Vec<E::Model>, f32, f32)
+        data: &[EstimatorData<E>],
+    ) -> (Vec<(E::Model, usize)>, f32, f32)
     where
         E: Estimator,
     {
         let mut hypotheses = vec![];
-        let mut best_inliers = 0;
+        // We don't want more than `block_size` data points to be used to evaluate models initially.
+        let initial_datapoints = std::cmp::min(self.block_size, data.len());
+        // Set the best inliers to be the floor of what the number of inliers would need to be to be the initial epsilon.
+        let mut best_inliers = (self.initial_epsilon * initial_datapoints as f32).floor() as usize;
+        // Set the initial epsilon (inlier ratio in good model).
         let mut epsilon = self.initial_epsilon;
+        // Set the initial delta (outlier ratio in good model).
         let mut delta = self.initial_delta;
         let mut positive_likelyhood_ratio = delta / epsilon;
         let mut negative_likelyhood_ratio = (1.0 - delta) / (1.0 - epsilon);
         let mut current_delta_estimations = 0;
         let mut total_delta_inliers = 0;
         let mut inlier_indices = vec![];
+        // Generate the random hypotheses using all the data, not just the evaluation data.
         let random_hypotheses: Vec<_> = (0..self.max_candidate_hypothesis)
-            .flat_map(|_| self.generate_random_hypotheses(data, estimator))
+            .flat_map(|_| self.generate_random_hypotheses(estimator, data))
             .collect();
+        // Iterate through all the randomly generated hypotheses to update epsilon and delta while finding good models.
         for model in random_hypotheses {
-            // Check if the model satisfies the ASPRT test.
+            // Check if the model satisfies the ASPRT test on only `inital_datapoints` evaluation data.
             let (pass, inliers) = self.asprt(
-                data.iter(),
+                data[..initial_datapoints].iter(),
                 &model,
                 positive_likelyhood_ratio,
                 negative_likelyhood_ratio,
@@ -87,17 +92,17 @@ where
                 // approximation of epsilon.
                 if inliers > best_inliers {
                     best_inliers = inliers;
-                    // Update epsilon.
+                    // Update epsilon (this can only increase, since there are more inliers).
                     epsilon = inliers as f32 / data.len() as f32;
-                    // May decrease positive likelyhood ratio.
+                    // Will decrease positive likelyhood ratio.
                     positive_likelyhood_ratio = delta / epsilon;
-                    // May increase negative likelyhood ratio.
+                    // Will increase negative likelyhood ratio.
                     negative_likelyhood_ratio = (1.0 - delta) / (1.0 - epsilon);
 
                     // Update the inlier indices.
                     inlier_indices = self.inliers(data.iter(), &model);
                 }
-                hypotheses.push(model);
+                hypotheses.push((model, inliers));
             } else if current_delta_estimations < self.max_delta_estimations {
                 // We want to add the information about inliers to our estimation of delta.
                 // We only do this up to `max_delta_estimations` times to avoid wasting too much time.
@@ -124,8 +129,8 @@ where
     /// for strength of data points.
     fn generate_random_hypotheses<E>(
         &mut self,
-        data: &[EstimatorData<E>],
         estimator: &E,
+        data: &[EstimatorData<E>],
     ) -> E::ModelIter
     where
         E: Estimator,
@@ -182,6 +187,16 @@ where
         (true, inliers)
     }
 
+    /// This function tells you how many models should be retained to include data item `i`.
+    fn num_to_retain(&self, item: usize, remaining: usize) -> usize {
+        // TODO: See if there is some way to re-write this to include no floating-point math.
+        std::cmp::min(
+            remaining / 2,
+            (self.max_candidate_hypothesis as f32
+                * 2.0f32.powf(-(item as f32) / self.block_size as f32)) as usize,
+        )
+    }
+
     /// Determines the number of inliers a model has.
     fn count_inliers<'a, M: Model>(
         &self,
@@ -216,15 +231,60 @@ where
     E: Estimator,
     R: Rng,
 {
-    type Inliers = Inliers;
-    type ModelInliers = impl Iterator<Item = (E::Model, Self::Inliers)>;
+    type Inliers = Vec<usize>;
 
     fn model(&mut self, estimator: &E, data: &[EstimatorData<E>]) -> Option<E::Model> {
         unimplemented!()
     }
 
-    fn models(&mut self, estimator: &E, data: &[EstimatorData<E>]) -> Self::ModelInliers {
-        vec![].into_iter()
+    fn model_inliers(
+        &mut self,
+        estimator: &E,
+        data: &[EstimatorData<E>],
+    ) -> Option<(E::Model, Self::Inliers)> {
+        // Generate the initial set of hypotheses. This also gets us an estimate of epsilon and delta.
+        // We only want to give it one block size of data for the initial generation.
+        let (mut hypotheses, mut epsilon, mut delta) = self.initial_hypotheses(estimator, data);
+        let inital_num_hypotheses = hypotheses.len();
+
+        // Gradually increase how many datapoints we are evaluating until we evaluate them all.
+        for num_data in self.block_size + 1..data.len() {
+            // This will retain no more than half of the hypotheses each time
+            // and gradually decrease as the number of samples we are evaluating increases.
+            let retain = self.num_to_retain(num_data, hypotheses.len());
+            // We need to sort the hypotheses based on how good they are (number inliers).
+            // The best hypotheses go to the beginning.
+            hypotheses.sort_unstable_by_key(|&(_, inliers)| -(inliers as isize));
+            hypotheses.resize_with(retain, || {
+                panic!("Arrsac::models should never resize the hypotheses to be higher");
+            });
+            if hypotheses.len() <= 1 {
+                break;
+            }
+            // Score the hypotheses with the new datapoint.
+            let new_datapoint = &data[num_data - 1];
+            for (hypothesis, inlier_count) in hypotheses.iter_mut() {
+                if hypothesis.residual(new_datapoint) < self.inlier_threshold {
+                    *inlier_count += 1;
+                }
+            }
+            // Every block size we do this.
+            if num_data % self.block_size == 0 {
+                // First, update epsilon using the best model.
+                // Technically model 0 might no longer be the best model after evaluating the last data-point,
+                // but that is not that important.
+                epsilon = hypotheses[0].1 as f32 / num_data as f32;
+                // Create the likelyhood ratios for inliers and outliers.
+                let positive_likelyhood_ratio = delta / epsilon;
+                let negative_likelyhood_ratio = (1.0 - delta) / (1.0 - epsilon);
+                // We generate hypotheses until we reach the max candidate hypotheses.
+                if hypotheses.len() < self.max_candidate_hypothesis {}
+            }
+        }
+        hypotheses.into_iter().next().map(|(model, _)| {
+            let inliers = self.inliers(data.iter(), &model);
+            (model, inliers)
+        })
     }
 }
 
