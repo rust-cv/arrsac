@@ -35,6 +35,7 @@ impl Config {
 pub struct Arrsac<R> {
     config: Config,
     rng: R,
+    random_samples: Vec<usize>,
 }
 
 impl<R> Arrsac<R>
@@ -43,7 +44,11 @@ where
 {
     /// `rng` should have the same properties you would want for a Monte Carlo simulation.
     pub fn new(config: Config, rng: R) -> Self {
-        Self { config, rng }
+        Self {
+            config,
+            rng,
+            random_samples: vec![],
+        }
     }
 
     /// Algorithm 3 from "A Comparative Analysis of RANSAC Techniques Leading to Adaptive Real-Time Random Sample Consensus"
@@ -153,17 +158,17 @@ where
         if data.len() < E::MIN_SAMPLES {
             panic!("cannot call generate_random_hypotheses without having enough samples");
         }
-        let mut random_samples = vec![0; E::MIN_SAMPLES];
-        for n in 0..E::MIN_SAMPLES {
+        self.random_samples.clear();
+        for _ in 0..E::MIN_SAMPLES {
             loop {
                 let s = self.rng.gen_range(0, data.len());
-                if !random_samples[..n].contains(&s) {
-                    random_samples[n] = s;
+                if !self.random_samples.contains(&s) {
+                    self.random_samples.push(s);
                     break;
                 }
             }
         }
-        estimator.estimate(random_samples.iter().map(|&ix| &data[ix]))
+        estimator.estimate(self.random_samples.iter().map(|&ix| &data[ix]))
     }
 
     /// Generates as many hypotheses as one call to `Estimator::estimate()` returns from a subset of the data.
@@ -305,6 +310,8 @@ where
         // We only want to give it one block size of data for the initial generation.
         let (mut hypotheses, _, delta) = self.initial_hypotheses(estimator, data);
 
+        let mut random_hypotheses = Vec::new();
+
         // Retain the hypotheses the initial time. This is done before the loop to ensure that if the
         // number of datapoints is too low and the for loop never executes that the best model is returned.
         self.retain_hypotheses(self.config.block_size, &mut hypotheses);
@@ -338,7 +345,6 @@ where
                 // Generate the list of inliers for the best model.
                 let inliers = self.inliers(data.iter(), &hypotheses[0].0);
                 // We generate hypotheses until we reach the initial num hypotheses.
-                let mut random_hypotheses = vec![];
                 for _ in 0..self.config.max_candidate_hypotheses {
                     random_hypotheses
                         .extend(self.generate_random_hypotheses_subset(estimator, data, &inliers));
