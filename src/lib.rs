@@ -3,19 +3,61 @@ use rand::Rng;
 use sample_consensus::{Consensus, Estimator, EstimatorData, Model};
 use std::vec;
 
+/// Configuration for an ARRSAC instance.
 #[derive(Setters)]
 pub struct Config {
+    /// Number of hypotheses that will be generated for each block of data evaluated
+    ///
+    /// Default: `50`
     max_candidate_hypotheses: usize,
+    /// Number of data points evaluated before more hypotheses are generated
+    ///
+    /// Default: `100`
     block_size: usize,
+    /// Number of times that the entire dataset is compared against a bad model to see
+    /// the probability of inliers in a bad model
+    ///
+    /// Default: `4`
     max_delta_estimations: usize,
+    /// Once a model reaches this level of unlikelyhood, it is rejected. Set this
+    /// higher to make it less restrictive, usually at the cost of more execution time.
+    ///
+    /// Increasing this will make it more likely to find a good result (unless it is set very high).
+    ///
+    /// Decreasing this will speed up execution.
+    ///
+    /// This ratio is not exposed as a parameter in the original paper, but is instead computed
+    /// recursively for a few iterations. It is roughly equivalent to the **reciprocal** of the
+    /// **probability of rejecting a good model**. You can use that to control the probability
+    /// that a good model is rejected.
+    ///
+    /// Default: `1e6`
     likelyhood_ratio_threshold: f32,
+    /// Initial anticipated probability of an inlier being part of a good model
+    ///
+    /// This is an estimation that will be updated as ARRSAC executes. The initial
+    /// estimate is purposefully low, which will accept more models. As models are
+    /// accepted, it will gradually increase it to match the best model found so far,
+    /// which makes it more restrictive.
+    ///
+    /// Default: `0.1`
     initial_epsilon: f32,
+    /// Initial anticipated probability of an inlier being part of a bad model
+    ///
+    /// This is an estimation that will be updated as ARRSAC executes. The initial
+    /// estimate is almost certainly incorrect. This can be modified for different data
+    /// to get better/faster results. As models are rejected, it will update this value
+    /// until it has evaluated it `max_delta_estimations` times.
+    ///
+    /// Default: `0.05`
     initial_delta: f32,
+    /// Residual threshold for determining if a data point is an inlier or an outlier of a model
     inlier_threshold: f32,
 }
 
 impl Config {
     /// The `inlier_threshold` is the one parameter that is always specific to your dataset.
+    /// This must be set to the threshold in which a data point's residual is considered an inlier.
     /// Some of the other parameters may need to be configured based on the amount of data,
     /// such as `block_size`, `likelyhood_ratio_threshold`, and `block_size`. However,
     /// `inlier_threshold` has to be set based on the residual function used with the model.
@@ -32,6 +74,7 @@ impl Config {
     }
 }
 
+/// The ARRSAC algorithm for sample consensus.
 pub struct Arrsac<R> {
     config: Config,
     rng: R,
@@ -369,15 +412,5 @@ where
             let inliers = self.inliers(data.iter(), &model);
             (model, inliers)
         })
-    }
-}
-
-pub struct Inliers;
-
-impl Iterator for Inliers {
-    type Item = usize;
-
-    fn next(&mut self) -> Option<usize> {
-        unimplemented!()
     }
 }

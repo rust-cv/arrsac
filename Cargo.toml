@@ -3,9 +3,16 @@ name = "arrsac"
 version = "0.1.0"
 authors = ["Geordon Worley <vadixidav@gmail.com>"]
 edition = "2018"
+description = "From the paper \"A Comparative Analysis of RANSAC Techniques Leading to Adaptive Real-Time Random Sample Consensus\""
+documentation = "https://docs.rs/arrsac/"
+repository = "https://github.com/rust-photogrammetry/arrsac"
+keywords = ["ransac", "sample", "consensus"]
+categories = ["algorithms", "science", "science::robotics"]
+license = "MIT"
+readme = "README.md"
 
 [dependencies]
-sample-consensus = { git = "https://github.com/rust-photogrammetry/sample-consensus" }
+sample-consensus = "0.1.0"
 rand = { version = "0.7.2", default-features = false }
 derive_setters = "0.1.2"
 
