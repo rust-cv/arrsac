@@ -11,29 +11,27 @@ struct Line {
     c: f32,
 }
 
-impl Model for Line {
-    type Data = Vector2<f32>;
-
-    fn residual(&self, point: &Self::Data) -> f32 {
+impl Model<Vector2<f32>> for Line {
+    fn residual(&self, point: &Vector2<f32>) -> f32 {
         (self.norm.dot(point) + self.c).abs()
     }
 }
 
 struct LineEstimator;
 
-impl Estimator for LineEstimator {
+impl Estimator<Vector2<f32>> for LineEstimator {
     type Model = Line;
     type ModelIter = std::iter::Once<Line>;
     const MIN_SAMPLES: usize = 2;
 
-    fn estimate<'a, I>(&self, mut data: I) -> Self::ModelIter
+    fn estimate<I>(&self, mut data: I) -> Self::ModelIter
     where
-        I: Iterator<Item = &'a Vector2<f32>> + Clone,
+        I: Iterator<Item = Vector2<f32>> + Clone,
     {
         let a = data.next().unwrap();
         let b = data.next().unwrap();
         let norm = Vector2::new(a.y - b.y, b.x - a.x).normalize();
-        let c = -norm.dot(b);
+        let c = -norm.dot(&b);
         std::iter::once(Line { norm, c })
     }
 }
@@ -45,7 +43,7 @@ fn lines() {
     // good-fitting line.
     let mut arrsac = Arrsac::new(Config::new(3.0), Pcg64::new_unseeded());
 
-    for _ in 0..20_000 {
+    for _ in 0..2000 {
         // Generate <a, b> and normalize.
         let norm = Vector2::new(rng.gen_range(-10.0, 10.0), rng.gen_range(-10.0, 10.0)).normalize();
         // Get parallel ray.
@@ -71,7 +69,7 @@ fn lines() {
             .collect();
 
         let model = arrsac
-            .model(&LineEstimator, &points)
+            .model(&LineEstimator, points.iter().copied())
             .expect("unable to estimate a model");
         // Check the slope using the cosine distance.
         assert!(

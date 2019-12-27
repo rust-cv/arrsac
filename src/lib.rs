@@ -1,6 +1,6 @@
 use derive_setters::*;
 use rand::Rng;
-use sample_consensus::{Consensus, Estimator, EstimatorData, Model};
+use sample_consensus::{Consensus, Estimator, Model};
 use std::vec;
 
 /// Configuration for an ARRSAC instance.
@@ -99,17 +99,17 @@ where
     /// At least at present, this does not use the PROSAC method and instead does completely random sampling.
     ///
     /// Returns the initial models (and their num inliers), `epsilon`, and `delta` in that order.
-    fn initial_hypotheses<E>(
+    fn initial_hypotheses<E, Data>(
         &mut self,
         estimator: &E,
-        data: &[EstimatorData<E>],
+        data: impl Iterator<Item = Data> + Clone,
     ) -> (Vec<(E::Model, usize)>, f32, f32)
     where
-        E: Estimator,
+        E: Estimator<Data>,
     {
         let mut hypotheses = vec![];
         // We don't want more than `block_size` data points to be used to evaluate models initially.
-        let initial_datapoints = std::cmp::min(self.config.block_size, data.len());
+        let initial_datapoints = std::cmp::min(self.config.block_size, data.clone().count());
         // Set the best inliers to be the floor of what the number of inliers would need to be to be the initial epsilon.
         let mut best_inliers =
             (self.config.initial_epsilon * initial_datapoints as f32).floor() as usize;
@@ -132,17 +132,17 @@ where
                 // to generate new hypotheses since that is much more likely to generate good ones.
                 random_hypotheses.extend(self.generate_random_hypotheses_subset(
                     estimator,
-                    data,
+                    data.clone(),
                     &best_inlier_indices,
                 ));
             } else {
                 // Generate the random hypotheses using all the data, not just the evaluation data.
-                random_hypotheses.extend(self.generate_random_hypotheses(estimator, data));
+                random_hypotheses.extend(self.generate_random_hypotheses(estimator, data.clone()));
             }
             for model in random_hypotheses.drain(..) {
                 // Check if the model satisfies the ASPRT test on only `inital_datapoints` evaluation data.
                 let (pass, inliers) = self.asprt(
-                    data[..initial_datapoints].iter(),
+                    data.clone().take(initial_datapoints),
                     &model,
                     positive_likelyhood_ratio,
                     negative_likelyhood_ratio,
@@ -153,7 +153,7 @@ where
                     if inliers > best_inliers {
                         best_inliers = inliers;
                         // Update epsilon (this can only increase, since there are more inliers).
-                        epsilon = inliers as f32 / data.len() as f32;
+                        epsilon = inliers as f32 / data.clone().count() as f32;
                         // Will decrease positive likelyhood ratio.
                         positive_likelyhood_ratio = delta / epsilon;
                         // Will increase negative likelyhood ratio.
@@ -163,7 +163,7 @@ where
                         // Some models might be incredibly low on inliers and we can't accept them.
                         if inliers > E::MIN_SAMPLES {
                             // Update the inlier indices appropriately.
-                            best_inlier_indices = self.inliers(data.iter(), &model);
+                            best_inlier_indices = self.inliers(data.clone(), &model);
                             // Mark that a usable hypothesis has been found.
                             found_usable_hypothesis = true;
                         }
@@ -172,11 +172,11 @@ where
                 } else if current_delta_estimations < self.config.max_delta_estimations {
                     // We want to add the information about inliers to our estimation of delta.
                     // We only do this up to `max_delta_estimations` times to avoid wasting too much time.
-                    total_delta_inliers += self.count_inliers(data.iter(), &model);
+                    total_delta_inliers += self.count_inliers(data.clone(), &model);
                     current_delta_estimations += 1;
                     // Update delta.
                     delta = total_delta_inliers as f32
-                        / (current_delta_estimations * data.len()) as f32;
+                        / (current_delta_estimations * data.clone().count()) as f32;
                     // May change positive likelyhood ratio.
                     positive_likelyhood_ratio = delta / epsilon;
                     // May change negative likelyhood ratio.
@@ -189,40 +189,44 @@ where
     }
 
     /// Generates as many hypotheses as one call to `Estimator::estimate()` returns from all data.
-    fn generate_random_hypotheses<E>(
+    fn generate_random_hypotheses<E, Data>(
         &mut self,
         estimator: &E,
-        data: &[EstimatorData<E>],
+        data: impl Iterator<Item = Data> + Clone,
     ) -> E::ModelIter
     where
-        E: Estimator,
+        E: Estimator<Data>,
     {
         // We can generate no hypotheses if the amout of data is too low.
-        if data.len() < E::MIN_SAMPLES {
+        if data.clone().count() < E::MIN_SAMPLES {
             panic!("cannot call generate_random_hypotheses without having enough samples");
         }
         self.random_samples.clear();
         for _ in 0..E::MIN_SAMPLES {
             loop {
-                let s = self.rng.gen_range(0, data.len());
+                let s = self.rng.gen_range(0, data.clone().count());
                 if !self.random_samples.contains(&s) {
                     self.random_samples.push(s);
                     break;
                 }
             }
         }
-        estimator.estimate(self.random_samples.iter().map(|&ix| &data[ix]))
+        estimator.estimate(
+            self.random_samples
+                .iter()
+                .map(|&ix| data.clone().nth(ix).unwrap()),
+        )
     }
 
     /// Generates as many hypotheses as one call to `Estimator::estimate()` returns from a subset of the data.
-    fn generate_random_hypotheses_subset<E>(
+    fn generate_random_hypotheses_subset<E, Data>(
         &mut self,
         estimator: &E,
-        data: &[EstimatorData<E>],
+        data: impl Iterator<Item = Data> + Clone,
         subset: &[usize],
     ) -> E::ModelIter
     where
-        E: Estimator,
+        E: Estimator<Data>,
     {
         // We can generate no hypotheses if the amout of data is too low.
         if subset.len() < E::MIN_SAMPLES {
@@ -238,7 +242,11 @@ where
                 }
             }
         }
-        estimator.estimate(random_samples.iter().map(|&ix| &data[subset[ix]]))
+        estimator.estimate(
+            random_samples
+                .iter()
+                .map(|&ix| data.clone().nth(subset[ix]).unwrap()),
+        )
     }
 
     /// Algorithm 1 in "Randomized RANSAC with Sequential Probability Ratio Test".
@@ -248,20 +256,17 @@ where
     /// `inlier_threshold` - The model residual error threshold between inliers and outliers
     /// `positive_likelyhood_ratio` - `δ / ε`
     /// `negative_likelyhood_ratio` - `(1 - δ) / (1 - ε)`
-    fn asprt<'a, M: Model>(
+    fn asprt<'a, Data, M: Model<Data>>(
         &self,
-        data: impl Iterator<Item = &'a M::Data>,
+        data: impl Iterator<Item = Data>,
         model: &M,
         positive_likelyhood_ratio: f32,
         negative_likelyhood_ratio: f32,
-    ) -> (bool, usize)
-    where
-        M::Data: 'a,
-    {
+    ) -> (bool, usize) {
         let mut likelyhood_ratio = 1.0;
         let mut inliers = 0;
         for data in data {
-            likelyhood_ratio *= if model.residual(data) < self.config.inlier_threshold {
+            likelyhood_ratio *= if model.residual(&data) < self.config.inlier_threshold {
                 inliers += 1;
                 positive_likelyhood_ratio
             } else {
@@ -301,27 +306,21 @@ where
     }
 
     /// Determines the number of inliers a model has.
-    fn count_inliers<'a, M: Model>(
+    fn count_inliers<'a, Data, M: Model<Data>>(
         &self,
-        data: impl Iterator<Item = &'a M::Data>,
+        data: impl Iterator<Item = Data>,
         model: &M,
-    ) -> usize
-    where
-        M::Data: 'a,
-    {
+    ) -> usize {
         data.filter(|data| model.residual(data) < self.config.inlier_threshold)
             .count()
     }
 
     /// Gets indices of inliers for a model.
-    fn inliers<'a, M: Model>(
+    fn inliers<'a, Data, M: Model<Data>>(
         &self,
-        data: impl Iterator<Item = &'a M::Data>,
+        data: impl Iterator<Item = Data>,
         model: &M,
-    ) -> Vec<usize>
-    where
-        M::Data: 'a,
-    {
+    ) -> Vec<usize> {
         data.enumerate()
             .filter(|(_, data)| model.residual(data) < self.config.inlier_threshold)
             .map(|(ix, _)| ix)
@@ -329,29 +328,31 @@ where
     }
 }
 
-impl<E, R> Consensus<E> for Arrsac<R>
+impl<E, R, Data> Consensus<E, Data> for Arrsac<R>
 where
-    E: Estimator,
+    E: Estimator<Data>,
     R: Rng,
 {
     type Inliers = Vec<usize>;
 
-    fn model(&mut self, estimator: &E, data: &[EstimatorData<E>]) -> Option<E::Model> {
+    fn model<I>(&mut self, estimator: &E, data: I) -> Option<E::Model>
+    where
+        I: Iterator<Item = Data> + Clone,
+    {
         self.model_inliers(estimator, data).map(|(model, _)| model)
     }
 
-    fn model_inliers(
-        &mut self,
-        estimator: &E,
-        data: &[EstimatorData<E>],
-    ) -> Option<(E::Model, Self::Inliers)> {
+    fn model_inliers<I>(&mut self, estimator: &E, data: I) -> Option<(E::Model, Self::Inliers)>
+    where
+        I: Iterator<Item = Data> + Clone,
+    {
         // Don't do anything if we don't have enough data.
-        if data.len() < E::MIN_SAMPLES {
+        if data.clone().count() < E::MIN_SAMPLES {
             return None;
         }
         // Generate the initial set of hypotheses. This also gets us an estimate of epsilon and delta.
         // We only want to give it one block size of data for the initial generation.
-        let (mut hypotheses, _, delta) = self.initial_hypotheses(estimator, data);
+        let (mut hypotheses, _, delta) = self.initial_hypotheses(estimator, data.clone());
 
         let mut random_hypotheses = Vec::new();
 
@@ -365,12 +366,12 @@ where
         }
 
         // Gradually increase how many datapoints we are evaluating until we evaluate them all.
-        for num_data in self.config.block_size + 1..=data.len() {
+        for num_data in self.config.block_size + 1..=data.clone().count() {
             if hypotheses.len() <= 1 {
                 break;
             }
             // Score the hypotheses with the new datapoint.
-            let new_datapoint = &data[num_data - 1];
+            let new_datapoint = &data.clone().nth(num_data - 1).unwrap();
             for (hypothesis, inlier_count) in hypotheses.iter_mut() {
                 if hypothesis.residual(new_datapoint) < self.config.inlier_threshold {
                     *inlier_count += 1;
@@ -386,14 +387,17 @@ where
                 let positive_likelyhood_ratio = delta / epsilon;
                 let negative_likelyhood_ratio = (1.0 - delta) / (1.0 - epsilon);
                 // Generate the list of inliers for the best model.
-                let inliers = self.inliers(data.iter(), &hypotheses[0].0);
+                let inliers = self.inliers(data.clone(), &hypotheses[0].0);
                 // We generate hypotheses until we reach the initial num hypotheses.
                 for _ in 0..self.config.max_candidate_hypotheses {
-                    random_hypotheses
-                        .extend(self.generate_random_hypotheses_subset(estimator, data, &inliers));
+                    random_hypotheses.extend(self.generate_random_hypotheses_subset(
+                        estimator,
+                        data.clone(),
+                        &inliers,
+                    ));
                     for model in random_hypotheses.drain(..) {
                         let (pass, inliers) = self.asprt(
-                            data[..num_data].iter(),
+                            data.clone().take(num_data),
                             &model,
                             positive_likelyhood_ratio,
                             negative_likelyhood_ratio,
@@ -409,7 +413,7 @@ where
             self.retain_hypotheses(num_data, &mut hypotheses);
         }
         hypotheses.into_iter().next().map(|(model, _)| {
-            let inliers = self.inliers(data.iter(), &model);
+            let inliers = self.inliers(data.clone(), &model);
             (model, inliers)
         })
     }
