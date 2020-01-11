@@ -3,7 +3,7 @@
 extern crate alloc;
 use alloc::{vec, vec::Vec};
 use derive_setters::*;
-use rand::Rng;
+use rand_core::RngCore;
 use sample_consensus::{Consensus, Estimator, Model};
 
 /// Configuration for an ARRSAC instance.
@@ -81,12 +81,12 @@ impl Config {
 pub struct Arrsac<R> {
     config: Config,
     rng: R,
-    random_samples: Vec<usize>,
+    random_samples: Vec<u32>,
 }
 
 impl<R> Arrsac<R>
 where
-    R: Rng,
+    R: RngCore,
 {
     /// `rng` should have the same properties you would want for a Monte Carlo simulation.
     pub fn new(config: Config, rng: R) -> Self {
@@ -115,7 +115,7 @@ where
         let initial_datapoints = core::cmp::min(self.config.block_size, data.clone().count());
         // Set the best inliers to be the floor of what the number of inliers would need to be to be the initial epsilon.
         let mut best_inliers =
-            (self.config.initial_epsilon * initial_datapoints as f32).floor() as usize;
+            libm::floorf(self.config.initial_epsilon * initial_datapoints as f32) as usize;
         // Set the initial epsilon (inlier ratio in good model).
         let mut epsilon = self.config.initial_epsilon;
         // Set the initial delta (outlier ratio in good model).
@@ -191,6 +191,30 @@ where
         (hypotheses, epsilon, delta)
     }
 
+    /// Populates `self.random_samples` using a len.
+    fn populate_samples(&mut self, num: usize, len: usize) {
+        // We can generate no hypotheses if the amout of data is too low.
+        if len < num {
+            panic!("cannot use arrsac without having enough samples");
+        }
+        let len = len as u32;
+        // Threshold generation below adapted from randomize::RandRangeU32.
+        let threshold = len.wrapping_neg() % len;
+        self.random_samples.clear();
+        for _ in 0..num {
+            loop {
+                let mul = u64::from(self.rng.next_u32()).wrapping_mul(u64::from(len));
+                if mul as u32 >= threshold {
+                    let s = (mul >> 32) as u32;
+                    if !self.random_samples.contains(&s) {
+                        self.random_samples.push(s);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     /// Generates as many hypotheses as one call to `Estimator::estimate()` returns from all data.
     fn generate_random_hypotheses<E, Data>(
         &mut self,
@@ -200,24 +224,11 @@ where
     where
         E: Estimator<Data>,
     {
-        // We can generate no hypotheses if the amout of data is too low.
-        if data.clone().count() < E::MIN_SAMPLES {
-            panic!("cannot call generate_random_hypotheses without having enough samples");
-        }
-        self.random_samples.clear();
-        for _ in 0..E::MIN_SAMPLES {
-            loop {
-                let s = self.rng.gen_range(0, data.clone().count());
-                if !self.random_samples.contains(&s) {
-                    self.random_samples.push(s);
-                    break;
-                }
-            }
-        }
+        self.populate_samples(E::MIN_SAMPLES, data.clone().count());
         estimator.estimate(
             self.random_samples
                 .iter()
-                .map(|&ix| data.clone().nth(ix).unwrap()),
+                .map(|&ix| data.clone().nth(ix as usize).unwrap()),
         )
     }
 
@@ -231,24 +242,11 @@ where
     where
         E: Estimator<Data>,
     {
-        // We can generate no hypotheses if the amout of data is too low.
-        if subset.len() < E::MIN_SAMPLES {
-            panic!("cannot call generate_random_hypotheses_subset without having enough samples");
-        }
-        let mut random_samples = vec![0; E::MIN_SAMPLES];
-        for n in 0..E::MIN_SAMPLES {
-            loop {
-                let s = self.rng.gen_range(0, subset.len());
-                if !random_samples[..n].contains(&s) {
-                    random_samples[n] = s;
-                    break;
-                }
-            }
-        }
+        self.populate_samples(E::MIN_SAMPLES, subset.len());
         estimator.estimate(
-            random_samples
+            core::mem::replace(&mut self.random_samples, vec![])
                 .iter()
-                .map(|&ix| data.clone().nth(subset[ix]).unwrap()),
+                .map(|&ix| data.clone().nth(subset[ix as usize]).unwrap()),
         )
     }
 
@@ -296,7 +294,7 @@ where
             core::cmp::max(
                 hypotheses.len() / 2,
                 (self.config.max_candidate_hypotheses as f32
-                    * 2.0f32.powf(-(item as f32) / self.config.block_size as f32))
+                    * libm::powf(2.0f32, -(item as f32) / self.config.block_size as f32))
                     as usize,
             ),
         );
@@ -334,7 +332,7 @@ where
 impl<E, R, Data> Consensus<E, Data> for Arrsac<R>
 where
     E: Estimator<Data>,
-    R: Rng,
+    R: RngCore,
 {
     type Inliers = Vec<usize>;
 

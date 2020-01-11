@@ -5,7 +5,7 @@ authors = ["Geordon Worley <vadixidav@gmail.com>"]
 edition = "2018"
 description = "From the paper \"A Comparative Analysis of RANSAC Techniques Leading to Adaptive Real-Time Random Sample Consensus\""
 documentation = "https://docs.rs/arrsac/"
-repository = "https://github.com/rust-photogrammetry/arrsac"
+repository = "https://github.com/rust-cv/arrsac"
 keywords = ["ransac", "sample", "consensus"]
 categories = ["algorithms", "science", "science::robotics", "no-std"]
 license = "MIT"
@@ -13,12 +13,14 @@ readme = "README.md"
 
 [dependencies]
 sample-consensus = "0.2.0"
-rand = { version = "0.7.2", default-features = false }
 derive_setters = "0.1.2"
+rand_core = "0.5.1"
+libm = "0.2.1"
 
 [dev-dependencies]
-pcg_rand = "0.11.1"
 nalgebra = "0.19.0"
+rand_pcg = "0.2.1"
+rand = "0.7.3"
 
 [profile.release]
 debug = true

@@ -1,8 +1,8 @@
 use arrsac::{Arrsac, Config};
 use nalgebra::Vector2;
-use pcg_rand::Pcg64;
 use rand::distributions::Uniform;
-use rand::{distributions::Distribution, Rng};
+use rand::{distributions::Distribution, Rng, SeedableRng};
+use rand_pcg::Pcg64;
 use sample_consensus::{Consensus, Estimator, Model};
 
 #[derive(Debug)]
@@ -38,10 +38,10 @@ impl Estimator<Vector2<f32>> for LineEstimator {
 
 #[test]
 fn lines() {
-    let mut rng = Pcg64::new_unseeded();
+    let mut rng = Pcg64::from_seed([7; 32]);
     // The max candidate hypotheses had to be increased dramatically to ensure all 1000 cases find a
     // good-fitting line.
-    let mut arrsac = Arrsac::new(Config::new(3.0), Pcg64::new_unseeded());
+    let mut arrsac = Arrsac::new(Config::new(3.0), Pcg64::from_seed([7; 32]));
 
     for _ in 0..2000 {
         // Generate <a, b> and normalize.
