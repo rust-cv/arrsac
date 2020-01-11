@@ -1,7 +1,10 @@
+#![no_std]
+
+extern crate alloc;
+use alloc::{vec, vec::Vec};
 use derive_setters::*;
 use rand::Rng;
 use sample_consensus::{Consensus, Estimator, Model};
-use std::vec;
 
 /// Configuration for an ARRSAC instance.
 #[derive(Setters)]
@@ -109,7 +112,7 @@ where
     {
         let mut hypotheses = vec![];
         // We don't want more than `block_size` data points to be used to evaluate models initially.
-        let initial_datapoints = std::cmp::min(self.config.block_size, data.clone().count());
+        let initial_datapoints = core::cmp::min(self.config.block_size, data.clone().count());
         // Set the best inliers to be the floor of what the number of inliers would need to be to be the initial epsilon.
         let mut best_inliers =
             (self.config.initial_epsilon * initial_datapoints as f32).floor() as usize;
@@ -288,9 +291,9 @@ where
         // but with min this makes absolutely no sense since in a block size of 100
         // it will be guaranteed to terminate because log2(initial_hypotheses) << 100.
         // I am making an executive decision to assume that this is a max instead of a min.
-        let num_retain = std::cmp::min(
+        let num_retain = core::cmp::min(
             hypotheses.len(),
-            std::cmp::max(
+            core::cmp::max(
                 hypotheses.len() / 2,
                 (self.config.max_candidate_hypotheses as f32
                     * 2.0f32.powf(-(item as f32) / self.config.block_size as f32))
