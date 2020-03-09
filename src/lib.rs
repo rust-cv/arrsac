@@ -257,7 +257,7 @@ where
     /// `inlier_threshold` - The model residual error threshold between inliers and outliers
     /// `positive_likelyhood_ratio` - `δ / ε`
     /// `negative_likelyhood_ratio` - `(1 - δ) / (1 - ε)`
-    fn asprt<'a, Data, M: Model<Data>>(
+    fn asprt<Data, M: Model<Data>>(
         &self,
         data: impl Iterator<Item = Data>,
         model: &M,
@@ -307,7 +307,7 @@ where
     }
 
     /// Determines the number of inliers a model has.
-    fn count_inliers<'a, Data, M: Model<Data>>(
+    fn count_inliers<Data, M: Model<Data>>(
         &self,
         data: impl Iterator<Item = Data>,
         model: &M,
@@ -317,7 +317,7 @@ where
     }
 
     /// Gets indices of inliers for a model.
-    fn inliers<'a, Data, M: Model<Data>>(
+    fn inliers<Data, M: Model<Data>>(
         &self,
         data: impl Iterator<Item = Data>,
         model: &M,
