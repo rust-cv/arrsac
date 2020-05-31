@@ -2,26 +2,76 @@
 
 extern crate alloc;
 use alloc::{vec, vec::Vec};
-use derive_setters::*;
 use rand_core::RngCore;
 use sample_consensus::{Consensus, Estimator, Model};
 
-/// Configuration for an ARRSAC instance.
-#[derive(Setters)]
-pub struct Config {
+/// The ARRSAC algorithm for sample consensus.
+pub struct Arrsac<R> {
+    max_candidate_hypotheses: usize,
+    block_size: usize,
+    max_delta_estimations: usize,
+    likelyhood_ratio_threshold: f32,
+    initial_epsilon: f32,
+    initial_delta: f32,
+    inlier_threshold: f32,
+    rng: R,
+    random_samples: Vec<u32>,
+}
+
+impl<R> Arrsac<R>
+where
+    R: RngCore,
+{
+    /// `rng` should have the same properties you would want for a Monte Carlo simulation.
+    /// It should generate random numbers quickly without having any discernable patterns.
+    ///
+    /// The `inlier_threshold` is the one parameter that is always specific to your dataset.
+    /// This must be set to the threshold in which a data point's residual is considered an inlier.
+    /// Some of the other parameters may need to be configured based on the amount of data,
+    /// such as `block_size`, `likelyhood_ratio_threshold`, and `block_size`. However,
+    /// `inlier_threshold` has to be set based on the residual function used with the model.
+    pub fn new(inlier_threshold: f32, rng: R) -> Self {
+        Self {
+            max_candidate_hypotheses: 50,
+            block_size: 100,
+            max_delta_estimations: 4,
+            likelyhood_ratio_threshold: 1e6,
+            initial_epsilon: 0.1,
+            initial_delta: 0.05,
+            inlier_threshold,
+            rng,
+            random_samples: vec![],
+        }
+    }
+
     /// Number of hypotheses that will be generated for each block of data evaluated
     ///
     /// Default: `50`
-    max_candidate_hypotheses: usize,
+    pub fn max_candidate_hypotheses(self, max_candidate_hypotheses: usize) -> Self {
+        Self {
+            max_candidate_hypotheses,
+            ..self
+        }
+    }
+
     /// Number of data points evaluated before more hypotheses are generated
     ///
     /// Default: `100`
-    block_size: usize,
+    pub fn block_size(self, block_size: usize) -> Self {
+        Self { block_size, ..self }
+    }
+
     /// Number of times that the entire dataset is compared against a bad model to see
     /// the probability of inliers in a bad model
     ///
     /// Default: `4`
-    max_delta_estimations: usize,
+    pub fn max_delta_estimations(self, max_delta_estimations: usize) -> Self {
+        Self {
+            max_delta_estimations,
+            ..self
+        }
+    }
+
     /// Once a model reaches this level of unlikelyhood, it is rejected. Set this
     /// higher to make it less restrictive, usually at the cost of more execution time.
     ///
@@ -35,7 +85,13 @@ pub struct Config {
     /// that a good model is rejected.
     ///
     /// Default: `1e6`
-    likelyhood_ratio_threshold: f32,
+    pub fn likelyhood_ratio_threshold(self, likelyhood_ratio_threshold: f32) -> Self {
+        Self {
+            likelyhood_ratio_threshold,
+            ..self
+        }
+    }
+
     /// Initial anticipated probability of an inlier being part of a good model
     ///
     /// This is an estimation that will be updated as ARRSAC executes. The initial
@@ -44,7 +100,13 @@ pub struct Config {
     /// which makes it more restrictive.
     ///
     /// Default: `0.1`
-    initial_epsilon: f32,
+    pub fn initial_epsilon(self, initial_epsilon: f32) -> Self {
+        Self {
+            initial_epsilon,
+            ..self
+        }
+    }
+
     /// Initial anticipated probability of an inlier being part of a bad model
     ///
     /// This is an estimation that will be updated as ARRSAC executes. The initial
@@ -53,47 +115,18 @@ pub struct Config {
     /// until it has evaluated it `max_delta_estimations` times.
     ///
     /// Default: `0.05`
-    initial_delta: f32,
-    /// Residual threshold for determining if a data point is an inlier or an outlier of a model
-    inlier_threshold: f32,
-}
-
-impl Config {
-    /// The `inlier_threshold` is the one parameter that is always specific to your dataset.
-    /// This must be set to the threshold in which a data point's residual is considered an inlier.
-    /// Some of the other parameters may need to be configured based on the amount of data,
-    /// such as `block_size`, `likelyhood_ratio_threshold`, and `block_size`. However,
-    /// `inlier_threshold` has to be set based on the residual function used with the model.
-    pub fn new(inlier_threshold: f32) -> Self {
+    pub fn initial_delta(self, initial_delta: f32) -> Self {
         Self {
-            max_candidate_hypotheses: 50,
-            block_size: 100,
-            max_delta_estimations: 4,
-            likelyhood_ratio_threshold: 1e6,
-            initial_epsilon: 0.1,
-            initial_delta: 0.05,
-            inlier_threshold,
+            initial_delta,
+            ..self
         }
     }
-}
 
-/// The ARRSAC algorithm for sample consensus.
-pub struct Arrsac<R> {
-    config: Config,
-    rng: R,
-    random_samples: Vec<u32>,
-}
-
-impl<R> Arrsac<R>
-where
-    R: RngCore,
-{
-    /// `rng` should have the same properties you would want for a Monte Carlo simulation.
-    pub fn new(config: Config, rng: R) -> Self {
+    /// Residual threshold for determining if a data point is an inlier or an outlier of a model
+    pub fn inlier_threshold(self, inlier_threshold: f32) -> Self {
         Self {
-            config,
-            rng,
-            random_samples: vec![],
+            inlier_threshold,
+            ..self
         }
     }
 
@@ -112,14 +145,14 @@ where
     {
         let mut hypotheses = vec![];
         // We don't want more than `block_size` data points to be used to evaluate models initially.
-        let initial_datapoints = core::cmp::min(self.config.block_size, data.clone().count());
+        let initial_datapoints = core::cmp::min(self.block_size, data.clone().count());
         // Set the best inliers to be the floor of what the number of inliers would need to be to be the initial epsilon.
         let mut best_inliers =
-            libm::floorf(self.config.initial_epsilon * initial_datapoints as f32) as usize;
+            libm::floorf(self.initial_epsilon * initial_datapoints as f32) as usize;
         // Set the initial epsilon (inlier ratio in good model).
-        let mut epsilon = self.config.initial_epsilon;
+        let mut epsilon = self.initial_epsilon;
         // Set the initial delta (outlier ratio in good model).
-        let mut delta = self.config.initial_delta;
+        let mut delta = self.initial_delta;
         let mut positive_likelyhood_ratio = delta / epsilon;
         let mut negative_likelyhood_ratio = (1.0 - delta) / (1.0 - epsilon);
         let mut current_delta_estimations = 0;
@@ -129,7 +162,7 @@ where
         // Lets us know if we found a candidate hypothesis that actually has enough inliers for us to generate a model from.
         let mut found_usable_hypothesis = false;
         // Iterate through all the randomly generated hypotheses to update epsilon and delta while finding good models.
-        for _ in 0..self.config.max_candidate_hypotheses {
+        for _ in 0..self.max_candidate_hypotheses {
             if found_usable_hypothesis {
                 // If we have found a hypothesis that has a sufficient number of inliers, we randomly sample from its inliers
                 // to generate new hypotheses since that is much more likely to generate good ones.
@@ -172,7 +205,7 @@ where
                         }
                     }
                     hypotheses.push((model, inliers));
-                } else if current_delta_estimations < self.config.max_delta_estimations {
+                } else if current_delta_estimations < self.max_delta_estimations {
                     // We want to add the information about inliers to our estimation of delta.
                     // We only do this up to `max_delta_estimations` times to avoid wasting too much time.
                     total_delta_inliers += self.count_inliers(data.clone(), &model);
@@ -267,14 +300,14 @@ where
         let mut likelyhood_ratio = 1.0;
         let mut inliers = 0;
         for data in data {
-            likelyhood_ratio *= if model.residual(&data) < self.config.inlier_threshold {
+            likelyhood_ratio *= if model.residual(&data) < self.inlier_threshold {
                 inliers += 1;
                 positive_likelyhood_ratio
             } else {
                 negative_likelyhood_ratio
             };
 
-            if likelyhood_ratio > self.config.likelyhood_ratio_threshold {
+            if likelyhood_ratio > self.likelyhood_ratio_threshold {
                 return (false, 0);
             }
         }
@@ -293,8 +326,8 @@ where
             hypotheses.len(),
             core::cmp::max(
                 hypotheses.len() / 2,
-                (self.config.max_candidate_hypotheses as f32
-                    * libm::powf(2.0f32, -(item as f32) / self.config.block_size as f32))
+                (self.max_candidate_hypotheses as f32
+                    * libm::powf(2.0f32, -(item as f32) / self.block_size as f32))
                     as usize,
             ),
         );
@@ -312,7 +345,7 @@ where
         data: impl Iterator<Item = Data>,
         model: &M,
     ) -> usize {
-        data.filter(|data| model.residual(data) < self.config.inlier_threshold)
+        data.filter(|data| model.residual(data) < self.inlier_threshold)
             .count()
     }
 
@@ -323,7 +356,7 @@ where
         model: &M,
     ) -> Vec<usize> {
         data.enumerate()
-            .filter(|(_, data)| model.residual(data) < self.config.inlier_threshold)
+            .filter(|(_, data)| model.residual(data) < self.inlier_threshold)
             .map(|(ix, _)| ix)
             .collect()
     }
@@ -359,7 +392,7 @@ where
 
         // Retain the hypotheses the initial time. This is done before the loop to ensure that if the
         // number of datapoints is too low and the for loop never executes that the best model is returned.
-        self.retain_hypotheses(self.config.block_size, &mut hypotheses);
+        self.retain_hypotheses(self.block_size, &mut hypotheses);
 
         // If there are no initial hypotheses then don't bother doing anything.
         if hypotheses.is_empty() {
@@ -367,19 +400,19 @@ where
         }
 
         // Gradually increase how many datapoints we are evaluating until we evaluate them all.
-        for num_data in self.config.block_size + 1..=data.clone().count() {
+        for num_data in self.block_size + 1..=data.clone().count() {
             if hypotheses.len() <= 1 {
                 break;
             }
             // Score the hypotheses with the new datapoint.
             let new_datapoint = &data.clone().nth(num_data - 1).unwrap();
             for (hypothesis, inlier_count) in hypotheses.iter_mut() {
-                if hypothesis.residual(new_datapoint) < self.config.inlier_threshold {
+                if hypothesis.residual(new_datapoint) < self.inlier_threshold {
                     *inlier_count += 1;
                 }
             }
             // Every block size we do this.
-            if num_data % self.config.block_size == 0 {
+            if num_data % self.block_size == 0 {
                 // First, update epsilon using the best model.
                 // Technically model 0 might no longer be the best model after evaluating the last data-point,
                 // but that is not that important.
@@ -390,7 +423,7 @@ where
                 // Generate the list of inliers for the best model.
                 let inliers = self.inliers(data.clone(), &hypotheses[0].0);
                 // We generate hypotheses until we reach the initial num hypotheses.
-                for _ in 0..self.config.max_candidate_hypotheses {
+                for _ in 0..self.max_candidate_hypotheses {
                     random_hypotheses.extend(self.generate_random_hypotheses_subset(
                         estimator,
                         data.clone(),

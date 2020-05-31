@@ -13,7 +13,6 @@ readme = "README.md"
 
 [dependencies]
 sample-consensus = "0.2.0"
-derive_setters = "0.1.2"
 rand_core = "0.5.1"
 libm = "0.2.1"
 

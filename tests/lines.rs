@@ -1,4 +1,4 @@
-use arrsac::{Arrsac, Config};
+use arrsac::Arrsac;
 use nalgebra::Vector2;
 use rand::distributions::Uniform;
 use rand::{distributions::Distribution, Rng, SeedableRng};
@@ -41,7 +41,7 @@ fn lines() {
     let mut rng = Pcg64::from_seed([7; 32]);
     // The max candidate hypotheses had to be increased dramatically to ensure all 1000 cases find a
     // good-fitting line.
-    let mut arrsac = Arrsac::new(Config::new(3.0), Pcg64::from_seed([7; 32]));
+    let mut arrsac = Arrsac::new(3.0, Pcg64::from_seed([7; 32]));
 
     for _ in 0..2000 {
         // Generate <a, b> and normalize.
