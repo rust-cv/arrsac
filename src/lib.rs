@@ -13,7 +13,7 @@ pub struct Arrsac<R> {
     likelyhood_ratio_threshold: f32,
     initial_epsilon: f32,
     initial_delta: f32,
-    inlier_threshold: f32,
+    inlier_threshold: f64,
     rng: R,
     random_samples: Vec<u32>,
 }
@@ -30,7 +30,7 @@ where
     /// Some of the other parameters may need to be configured based on the amount of data,
     /// such as `block_size`, `likelyhood_ratio_threshold`, and `block_size`. However,
     /// `inlier_threshold` has to be set based on the residual function used with the model.
-    pub fn new(inlier_threshold: f32, rng: R) -> Self {
+    pub fn new(inlier_threshold: f64, rng: R) -> Self {
         Self {
             max_candidate_hypotheses: 50,
             block_size: 100,
@@ -123,7 +123,7 @@ where
     }
 
     /// Residual threshold for determining if a data point is an inlier or an outlier of a model
-    pub fn inlier_threshold(self, inlier_threshold: f32) -> Self {
+    pub fn inlier_threshold(self, inlier_threshold: f64) -> Self {
         Self {
             inlier_threshold,
             ..self

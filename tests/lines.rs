@@ -7,26 +7,26 @@ use sample_consensus::{Consensus, Estimator, Model};
 
 #[derive(Debug)]
 struct Line {
-    norm: Vector2<f32>,
-    c: f32,
+    norm: Vector2<f64>,
+    c: f64,
 }
 
-impl Model<Vector2<f32>> for Line {
-    fn residual(&self, point: &Vector2<f32>) -> f32 {
+impl Model<Vector2<f64>> for Line {
+    fn residual(&self, point: &Vector2<f64>) -> f64 {
         (self.norm.dot(point) + self.c).abs()
     }
 }
 
 struct LineEstimator;
 
-impl Estimator<Vector2<f32>> for LineEstimator {
+impl Estimator<Vector2<f64>> for LineEstimator {
     type Model = Line;
     type ModelIter = std::iter::Once<Line>;
     const MIN_SAMPLES: usize = 2;
 
     fn estimate<I>(&self, mut data: I) -> Self::ModelIter
     where
-        I: Iterator<Item = Vector2<f32>> + Clone,
+        I: Iterator<Item = Vector2<f64>> + Clone,
     {
         let a = data.next().unwrap();
         let b = data.next().unwrap();
@@ -58,10 +58,10 @@ fn lines() {
         // The points must be generated along the line, but the distance should be bounded to make it more difficult.
         let distances = Uniform::new(-50.0, 50.0);
         // Generate the points.
-        let points: Vec<Vector2<f32>> = (0..num)
+        let points: Vec<Vector2<f64>> = (0..num)
             .map(|_| {
-                let residual: f32 = residuals.sample(&mut rng);
-                let distance: f32 = distances.sample(&mut rng);
+                let residual: f64 = residuals.sample(&mut rng);
+                let distance: f64 = distances.sample(&mut rng);
                 let along = ray * distance;
                 let against = (residual - c) * norm;
                 along + against

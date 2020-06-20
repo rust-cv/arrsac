@@ -12,7 +12,7 @@ license = "MIT"
 readme = "README.md"
 
 [dependencies]
-sample-consensus = "0.2.0"
+sample-consensus = "1.0.1"
 rand_core = "0.5.1"
 libm = "0.2.1"
 
