@@ -1,6 +1,6 @@
 [package]
 name = "arrsac"
-version = "0.6.0"
+version = "0.6.1-alpha.0"
 authors = ["Geordon Worley <vadixidav@gmail.com>"]
 edition = "2018"
 description = "From the paper \"A Comparative Analysis of RANSAC Techniques Leading to Adaptive Real-Time Random Sample Consensus\""
