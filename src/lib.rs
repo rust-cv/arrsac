@@ -394,8 +394,10 @@ where
         // number of datapoints is too low and the for loop never executes that the best model is returned.
         self.retain_hypotheses(self.block_size, &mut hypotheses);
 
-        // If there are no initial hypotheses then don't bother doing anything.
-        if hypotheses.is_empty() {
+        // If there are no initial hypotheses or the best hypothesis doesnt have enough inliers then don't bother doing anything.
+        if hypotheses.is_empty()
+            || self.inliers(data.clone(), &hypotheses[0].0).len() <= E::MIN_SAMPLES
+        {
             return None;
         }
 
