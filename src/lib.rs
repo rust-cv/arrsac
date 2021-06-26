@@ -277,7 +277,7 @@ where
     {
         self.populate_samples(E::MIN_SAMPLES, subset.len());
         estimator.estimate(
-            core::mem::replace(&mut self.random_samples, vec![])
+            core::mem::take(&mut self.random_samples)
                 .iter()
                 .map(|&ix| data.clone().nth(subset[ix as usize]).unwrap()),
         )
