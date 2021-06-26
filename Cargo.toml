@@ -14,12 +14,12 @@ readme = "README.md"
 [dependencies]
 sample-consensus = "1.0.1"
 libm = "0.2.1"
-rand_core = "0.6.2"
+rand_core = "0.6.3"
 
 [dev-dependencies]
 nalgebra = "0.25.3"
-rand_pcg = "0.3.0"
-rand = "0.8.3"
+rand_pcg = "0.3.1"
+rand = "0.8.4"
 
 [profile.dev]
 opt-level = 3
