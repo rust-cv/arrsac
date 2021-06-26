@@ -1,9 +1,53 @@
 use arrsac::Arrsac;
-use nalgebra::Vector2;
 use rand::distributions::Uniform;
 use rand::{distributions::Distribution, Rng, SeedableRng};
 use rand_pcg::Pcg64;
 use sample_consensus::{Consensus, Estimator, Model};
+
+#[derive(Debug, Clone, Copy)]
+struct Vector2<T> {
+    x: T,
+    y: T,
+}
+
+impl Vector2<f64> {
+    fn new(x: f64, y: f64) -> Self {
+        Self { x, y }
+    }
+    fn dot(&self, other: &Self) -> f64 {
+        self.x * other.x + self.y * other.y
+    }
+    fn norm(&self) -> f64 {
+        (self.x * self.x + self.y * self.y).sqrt()
+    }
+    fn normalize(&self) -> Self {
+        let v_norm = self.norm();
+        Self {
+            x: self.x / v_norm,
+            y: self.y / v_norm,
+        }
+    }
+}
+
+impl core::ops::Mul<Vector2<f64>> for f64 {
+    type Output = Vector2<f64>;
+    fn mul(self, rhs: Vector2<f64>) -> Self::Output {
+        Vector2 {
+            x: self * rhs.x,
+            y: self * rhs.y,
+        }
+    }
+}
+
+impl core::ops::Add for Vector2<f64> {
+    type Output = Self;
+    fn add(self, rhs: Self) -> Self::Output {
+        Self {
+            x: self.x + rhs.x,
+            y: self.y + rhs.y,
+        }
+    }
+}
 
 #[derive(Debug)]
 struct Line {
@@ -62,7 +106,7 @@ fn lines() {
             .map(|_| {
                 let residual: f64 = residuals.sample(&mut rng);
                 let distance: f64 = distances.sample(&mut rng);
-                let along = ray * distance;
+                let along = distance * ray;
                 let against = (residual - c) * norm;
                 along + against
             })
