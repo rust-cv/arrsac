@@ -388,9 +388,6 @@ where
             let samples_up_to_end_of_block = samples_up_to_beginning_of_block + self.block_size;
             // Score hypotheses with samples.
             for sample in samples_up_to_beginning_of_block..samples_up_to_end_of_block {
-                if hypotheses.len() <= 1 {
-                    break 'outer;
-                }
                 // Score the hypotheses with the new datapoint.
                 let new_datapoint = if let Some(datapoint) = data.clone().nth(sample) {
                     datapoint
@@ -445,6 +442,9 @@ where
             // this basic right shift below.
             hypotheses.sort_unstable_by_key(|&(_, inliers)| Reverse(inliers));
             hypotheses.truncate(self.max_candidate_hypotheses >> block);
+            if hypotheses.len() <= 1 {
+                break 'outer;
+            }
         }
         hypotheses
             .into_iter()
