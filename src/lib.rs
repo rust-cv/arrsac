@@ -1,11 +1,18 @@
 #![no_std]
 
 extern crate alloc;
+use core::cmp::Reverse;
+
 use alloc::{vec, vec::Vec};
 use rand_core::RngCore;
 use sample_consensus::{Consensus, Estimator, Model};
 
 /// The ARRSAC algorithm for sample consensus.
+///
+/// Don't forget to shuffle your input data points to avoid bias before
+/// using this consensus process. It will not shuffle your data for you.
+/// If you do not shuffle, the output will be biased towards data at the beginning
+/// of the inputs.
 pub struct Arrsac<R> {
     max_candidate_hypotheses: usize,
     block_size: usize,
@@ -147,8 +154,7 @@ where
         // We don't want more than `block_size` data points to be used to evaluate models initially.
         let initial_datapoints = core::cmp::min(self.block_size, data.clone().count());
         // Set the best inliers to be the floor of what the number of inliers would need to be to be the initial epsilon.
-        let mut best_inliers =
-            libm::floorf(self.initial_epsilon * initial_datapoints as f32) as usize;
+        let mut best_inliers = (self.initial_epsilon * initial_datapoints as f32) as usize;
         // Set the initial epsilon (inlier ratio in good model).
         let mut epsilon = self.initial_epsilon;
         // Set the initial delta (outlier ratio in good model).
@@ -182,6 +188,7 @@ where
                     &model,
                     positive_likelyhood_ratio,
                     negative_likelyhood_ratio,
+                    E::MIN_SAMPLES,
                 );
                 if pass {
                     // If this has the largest support (most inliers) then we update the
@@ -189,20 +196,16 @@ where
                     if inliers > best_inliers {
                         best_inliers = inliers;
                         // Update epsilon (this can only increase, since there are more inliers).
-                        epsilon = inliers as f32 / data.clone().count() as f32;
+                        epsilon = inliers as f32 / initial_datapoints as f32;
                         // Will decrease positive likelyhood ratio.
                         positive_likelyhood_ratio = delta / epsilon;
                         // Will increase negative likelyhood ratio.
                         negative_likelyhood_ratio = (1.0 - delta) / (1.0 - epsilon);
 
-                        // We only want to mark the hypothesis as usable if the inliers can generate a model.
-                        // Some models might be incredibly low on inliers and we can't accept them.
-                        if inliers > E::MIN_SAMPLES {
-                            // Update the inlier indices appropriately.
-                            best_inlier_indices = self.inliers(data.clone(), &model);
-                            // Mark that a usable hypothesis has been found.
-                            found_usable_hypothesis = true;
-                        }
+                        // Update the inlier indices appropriately.
+                        best_inlier_indices = self.inliers(data.clone(), &model);
+                        // Mark that a usable hypothesis has been found.
+                        found_usable_hypothesis = true;
                     }
                     hypotheses.push((model, inliers));
                 } else if current_delta_estimations < self.max_delta_estimations {
@@ -296,6 +299,7 @@ where
         model: &M,
         positive_likelyhood_ratio: f32,
         negative_likelyhood_ratio: f32,
+        minimum_samples: usize,
     ) -> (bool, usize) {
         let mut likelyhood_ratio = 1.0;
         let mut inliers = 0;
@@ -312,31 +316,7 @@ where
             }
         }
 
-        (true, inliers)
-    }
-
-    /// This function sorts and retains the correct number of hypotheses when evaluating data item `i`.
-    fn retain_hypotheses<M>(&self, item: usize, hypotheses: &mut Vec<(M, usize)>) {
-        // TODO: See if there is some way to re-write this to include no floating-point math.
-        // TODO: I am going against what the paper says by using max here instead of min,
-        // but with min this makes absolutely no sense since in a block size of 100
-        // it will be guaranteed to terminate because log2(initial_hypotheses) << 100.
-        // I am making an executive decision to assume that this is a max instead of a min.
-        let num_retain = core::cmp::min(
-            hypotheses.len(),
-            core::cmp::max(
-                hypotheses.len() / 2,
-                (self.max_candidate_hypotheses as f32
-                    * libm::powf(2.0f32, -(item as f32) / self.block_size as f32))
-                    as usize,
-            ),
-        );
-        // We need to sort the hypotheses based on how good they are (number inliers).
-        // The best hypotheses go to the beginning.
-        hypotheses.sort_unstable_by_key(|&(_, inliers)| -(inliers as isize));
-        hypotheses.resize_with(num_retain, || {
-            panic!("Arrsac::models should never resize the hypotheses to be higher");
-        });
+        (inliers >= minimum_samples, inliers)
     }
 
     /// Determines the number of inliers a model has.
@@ -392,7 +372,8 @@ where
 
         // Retain the hypotheses the initial time. This is done before the loop to ensure that if the
         // number of datapoints is too low and the for loop never executes that the best model is returned.
-        self.retain_hypotheses(self.block_size, &mut hypotheses);
+        hypotheses.sort_unstable_by_key(|&(_, inliers)| Reverse(inliers));
+        hypotheses.truncate(self.max_candidate_hypotheses);
 
         // If there are no initial hypotheses or the best hypothesis doesnt have enough inliers then don't bother doing anything.
         if hypotheses.is_empty()
@@ -402,55 +383,75 @@ where
         }
 
         // Gradually increase how many datapoints we are evaluating until we evaluate them all.
-        for num_data in self.block_size + 1..=data.clone().count() {
-            if hypotheses.len() <= 1 {
-                break;
-            }
-            // Score the hypotheses with the new datapoint.
-            let new_datapoint = &data.clone().nth(num_data - 1).unwrap();
-            for (hypothesis, inlier_count) in hypotheses.iter_mut() {
-                if hypothesis.residual(new_datapoint) < self.inlier_threshold {
-                    *inlier_count += 1;
+        'outer: for block in 1.. {
+            let samples_up_to_beginning_of_block = block * self.block_size;
+            let samples_up_to_end_of_block = samples_up_to_beginning_of_block + self.block_size;
+            // Score hypotheses with samples.
+            for sample in samples_up_to_beginning_of_block..samples_up_to_end_of_block {
+                if hypotheses.len() <= 1 {
+                    break 'outer;
+                }
+                // Score the hypotheses with the new datapoint.
+                let new_datapoint = if let Some(datapoint) = data.clone().nth(sample) {
+                    datapoint
+                } else {
+                    // We reached the last datapoint, so break out of the outer loop.
+                    break 'outer;
+                };
+                for (hypothesis, inlier_count) in hypotheses.iter_mut() {
+                    if hypothesis.residual(&new_datapoint) < self.inlier_threshold {
+                        *inlier_count += 1;
+                    }
                 }
             }
-            // Every block size we do this.
-            if num_data % self.block_size == 0 {
-                // First, update epsilon using the best model.
-                // Technically model 0 might no longer be the best model after evaluating the last data-point,
-                // but that is not that important.
-                let epsilon = hypotheses[0].1 as f32 / num_data as f32;
-                // Create the likelyhood ratios for inliers and outliers.
-                let positive_likelyhood_ratio = delta / epsilon;
-                let negative_likelyhood_ratio = (1.0 - delta) / (1.0 - epsilon);
-                // Generate the list of inliers for the best model.
-                let inliers = self.inliers(data.clone(), &hypotheses[0].0);
-                // We generate hypotheses until we reach the initial num hypotheses.
-                for _ in 0..self.max_candidate_hypotheses {
-                    random_hypotheses.extend(self.generate_random_hypotheses_subset(
-                        estimator,
-                        data.clone(),
-                        &inliers,
-                    ));
-                    for model in random_hypotheses.drain(..) {
-                        let (pass, inliers) = self.asprt(
-                            data.clone().take(num_data),
-                            &model,
-                            positive_likelyhood_ratio,
-                            negative_likelyhood_ratio,
-                        );
-                        if pass {
-                            hypotheses.push((model, inliers));
-                        }
+            // First, update epsilon using the best model.
+            // Technically model 0 might no longer be the best model after evaluating the last data-point,
+            // but that is not that important.
+            let epsilon = hypotheses[0].1 as f32 / samples_up_to_end_of_block as f32;
+            // Create the likelyhood ratios for inliers and outliers.
+            let positive_likelyhood_ratio = delta / epsilon;
+            let negative_likelyhood_ratio = (1.0 - delta) / (1.0 - epsilon);
+            // Generate the list of inliers for the best model.
+            let inliers = self.inliers(data.clone(), &hypotheses[0].0);
+            // We generate hypotheses until we reach the initial num hypotheses.
+            // We can't count the number generated because it could generate 0 hypotheses
+            // and then the loop would continue indefinitely.
+            for _ in 0..self.max_candidate_hypotheses {
+                random_hypotheses.extend(self.generate_random_hypotheses_subset(
+                    estimator,
+                    data.clone(),
+                    &inliers,
+                ));
+                for model in random_hypotheses.drain(..) {
+                    let (pass, inliers) = self.asprt(
+                        data.clone().take(samples_up_to_end_of_block),
+                        &model,
+                        positive_likelyhood_ratio,
+                        negative_likelyhood_ratio,
+                        E::MIN_SAMPLES,
+                    );
+                    if pass {
+                        hypotheses.push((model, inliers));
                     }
                 }
             }
             // This will retain at least half of the hypotheses each time
             // and gradually decrease as the number of samples we are evaluating increases.
-            self.retain_hypotheses(num_data, &mut hypotheses);
+            // NOTE: The paper says to run this outside of this if statement, but that
+            // seems incorrect intuitively, other wise the minimum would cause the
+            // number of models to halve on every single data point.
+            // At least halving on every block makes more sense.
+            // The paper also says to use a peculiar formula that just results in doing
+            // this basic right shift below.
+            hypotheses.sort_unstable_by_key(|&(_, inliers)| Reverse(inliers));
+            hypotheses.truncate(self.max_candidate_hypotheses >> block);
         }
-        hypotheses.into_iter().next().map(|(model, _)| {
-            let inliers = self.inliers(data.clone(), &model);
-            (model, inliers)
-        })
+        hypotheses
+            .into_iter()
+            .max_by_key(|&(_, inliers)| inliers)
+            .map(|(model, _)| {
+                let inliers = self.inliers(data.clone(), &model);
+                (model, inliers)
+            })
     }
 }
