@@ -16,7 +16,6 @@ use sample_consensus::{Consensus, Estimator, Model};
 pub struct Arrsac<R> {
     max_candidate_hypotheses: usize,
     block_size: usize,
-    max_delta_estimations: usize,
     likelihood_ratio_threshold: f32,
     initial_epsilon: f32,
     initial_delta: f32,
@@ -37,14 +36,25 @@ where
     /// Some of the other parameters may need to be configured based on the amount of data,
     /// such as `block_size`, `likelihood_ratio_threshold`, and `block_size`. However,
     /// `inlier_threshold` has to be set based on the residual function used with the model.
+    ///
+    /// `initial_epsilon` must be higher than `initial_delta`. If you modify these values,
+    /// you need to make sure that within one `block_size` the `likelihood_ratio_threshold`
+    /// can be reached and a model can be rejected. Basically, make sure that
+    /// `((1.0 - delta) / (1.0 - epsilon))^block_size >>> likelihood_ratio_threshold`.
+    /// This must be done to ensure outlier models are rejected during the initial generation
+    /// phase, which only processes `block_size` datapoints.
+    ///
+    /// `initial_epsilon` should also be as large as you can set it where it is still relatively
+    /// pessimistic. This is so that we can more easily reject a model early in the process
+    /// to compute an updated value for delta during the adaptive process. This may not be possible
+    /// and will depend on your data.
     pub fn new(inlier_threshold: f64, rng: R) -> Self {
         Self {
             max_candidate_hypotheses: 50,
             block_size: 100,
-            max_delta_estimations: 4,
-            likelihood_ratio_threshold: 1e6,
-            initial_epsilon: 0.1,
-            initial_delta: 0.05,
+            likelihood_ratio_threshold: 1e1,
+            initial_epsilon: 0.05,
+            initial_delta: 0.01,
             inlier_threshold,
             rng,
             random_samples: vec![],
@@ -66,17 +76,6 @@ where
     /// Default: `100`
     pub fn block_size(self, block_size: usize) -> Self {
         Self { block_size, ..self }
-    }
-
-    /// Number of times that the entire dataset is compared against a bad model to see
-    /// the probability of inliers in a bad model
-    ///
-    /// Default: `4`
-    pub fn max_delta_estimations(self, max_delta_estimations: usize) -> Self {
-        Self {
-            max_delta_estimations,
-            ..self
-        }
     }
 
     /// Once a model reaches this level of unlikelihood, it is rejected. Set this
@@ -106,7 +105,7 @@ where
     /// accepted, it will gradually increase it to match the best model found so far,
     /// which makes it more restrictive.
     ///
-    /// Default: `0.1`
+    /// Default: `0.5`
     pub fn initial_epsilon(self, initial_epsilon: f32) -> Self {
         Self {
             initial_epsilon,
@@ -121,7 +120,7 @@ where
     /// to get better/faster results. As models are rejected, it will update this value
     /// until it has evaluated it `max_delta_estimations` times.
     ///
-    /// Default: `0.05`
+    /// Default: `0.25`
     pub fn initial_delta(self, initial_delta: f32) -> Self {
         Self {
             initial_delta,
@@ -183,20 +182,24 @@ where
             }
             for model in random_hypotheses.drain(..) {
                 // Check if the model satisfies the ASPRT test on only `inital_datapoints` evaluation data.
-                let (pass, inliers) = self.asprt(
+                if let Some(inliers) = self.asprt(
                     data.clone().take(initial_datapoints),
                     &model,
                     positive_likelihood_ratio,
                     negative_likelihood_ratio,
                     E::MIN_SAMPLES,
-                );
-                if pass {
+                ) {
                     // If this has the largest support (most inliers) then we update the
                     // approximation of epsilon.
                     if inliers > best_inliers {
                         best_inliers = inliers;
                         // Update epsilon (this can only increase, since there are more inliers).
                         epsilon = inliers as f32 / initial_datapoints as f32;
+                        // We need to ensure that the delta is sufficiently lower than epsilon to reach
+                        // the likelihood ratio threshold within `block_size` samples.
+                        if delta > epsilon * 0.75 {
+                            delta = epsilon * 0.75;
+                        }
                         // Will decrease positive likelihood ratio.
                         positive_likelihood_ratio = delta / epsilon;
                         // Will increase negative likelihood ratio.
@@ -208,14 +211,22 @@ where
                         found_usable_hypothesis = true;
                     }
                     hypotheses.push((model, inliers));
-                } else if current_delta_estimations < self.max_delta_estimations {
-                    // We want to add the information about inliers to our estimation of delta.
-                    // We only do this up to `max_delta_estimations` times to avoid wasting too much time.
-                    total_delta_inliers += self.count_inliers(data.clone(), &model);
+                } else {
+                    // We want to add the information about inliers of a rejected model to our estimation of delta.
+                    total_delta_inliers +=
+                        self.count_inliers(data.clone().take(initial_datapoints), &model);
                     current_delta_estimations += 1;
                     // Update delta.
                     delta = total_delta_inliers as f32
-                        / (current_delta_estimations * data.clone().count()) as f32;
+                        / (current_delta_estimations * initial_datapoints) as f32;
+                    // We need to ensure that the delta is sufficiently lower than epsilon to reach
+                    // the likelihood ratio threshold within `block_size` samples.
+                    if delta > epsilon {
+                        epsilon = delta * 1.25;
+                        if epsilon > 1.0 {
+                            epsilon = 1.0;
+                        }
+                    }
                     // May change positive likelihood ratio.
                     positive_likelihood_ratio = delta / epsilon;
                     // May change negative likelihood ratio.
@@ -288,7 +299,7 @@ where
 
     /// Algorithm 1 in "Randomized RANSAC with Sequential Probability Ratio Test".
     ///
-    /// This tests if a model is accepted. Returns `true` on accepted and `false` on rejected.
+    /// This tests if a model is accepted. Returns `Some(inliers)` if accepted or `None` if rejected.
     ///
     /// `inlier_threshold` - The model residual error threshold between inliers and outliers
     /// `positive_likelihood_ratio` - `δ / ε`
@@ -300,7 +311,7 @@ where
         positive_likelihood_ratio: f32,
         negative_likelihood_ratio: f32,
         minimum_samples: usize,
-    ) -> (bool, usize) {
+    ) -> Option<usize> {
         let mut likelihood_ratio = 1.0;
         let mut inliers = 0;
         for data in data {
@@ -311,12 +322,12 @@ where
                 negative_likelihood_ratio
             };
 
-            if likelihood_ratio > self.likelihood_ratio_threshold {
-                return (false, 0);
+            if likelihood_ratio > self.likelihood_ratio_threshold || likelihood_ratio.is_nan() {
+                return None;
             }
         }
 
-        (inliers >= minimum_samples, inliers)
+        (inliers >= minimum_samples).then(|| inliers)
     }
 
     /// Determines the number of inliers a model has.
@@ -366,7 +377,7 @@ where
         }
         // Generate the initial set of hypotheses. This also gets us an estimate of epsilon and delta.
         // We only want to give it one block size of data for the initial generation.
-        let (mut hypotheses, _, delta) = self.initial_hypotheses(estimator, data.clone());
+        let (mut hypotheses, _, mut delta) = self.initial_hypotheses(estimator, data.clone());
 
         let mut random_hypotheses = Vec::new();
 
@@ -405,6 +416,11 @@ where
             // Technically model 0 might no longer be the best model after evaluating the last data-point,
             // but that is not that important.
             let epsilon = hypotheses[0].1 as f32 / samples_up_to_end_of_block as f32;
+            // We need to ensure that the delta is sufficiently lower than epsilon to reach
+            // the likelihood ratio threshold within `block_size` samples.
+            if delta > epsilon * 0.75 {
+                delta = epsilon * 0.75;
+            }
             // Create the likelihood ratios for inliers and outliers.
             let positive_likelihood_ratio = delta / epsilon;
             let negative_likelihood_ratio = (1.0 - delta) / (1.0 - epsilon);
@@ -420,14 +436,13 @@ where
                     &inliers,
                 ));
                 for model in random_hypotheses.drain(..) {
-                    let (pass, inliers) = self.asprt(
+                    if let Some(inliers) = self.asprt(
                         data.clone().take(samples_up_to_end_of_block),
                         &model,
                         positive_likelihood_ratio,
                         negative_likelihood_ratio,
                         E::MIN_SAMPLES,
-                    );
-                    if pass {
+                    ) {
                         hypotheses.push((model, inliers));
                     }
                 }

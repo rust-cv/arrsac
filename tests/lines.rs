@@ -117,7 +117,7 @@ fn lines() {
             .expect("unable to estimate a model");
         // Check the slope using the cosine distance.
         assert!(
-            model.norm.dot(&norm).abs() > 0.9,
+            model.norm.dot(&norm).abs() > 0.99,
             "slope out of expected range"
         );
     }
