@@ -1,7 +1,7 @@
 use arrsac::Arrsac;
 use rand::distributions::Uniform;
 use rand::{distributions::Distribution, Rng, SeedableRng};
-use rand_pcg::Pcg64;
+use rand_xoshiro::Xoshiro256PlusPlus;
 use sample_consensus::{Consensus, Estimator, Model};
 
 #[derive(Debug, Clone, Copy)]
@@ -82,10 +82,10 @@ impl Estimator<Vector2<f64>> for LineEstimator {
 
 #[test]
 fn lines() {
-    let mut rng = Pcg64::from_seed([7; 32]);
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0);
     // The max candidate hypotheses had to be increased dramatically to ensure all 1000 cases find a
     // good-fitting line.
-    let mut arrsac = Arrsac::new(3.0, Pcg64::from_seed([7; 32]));
+    let mut arrsac = Arrsac::new(3.0, rng.clone());
 
     for _ in 0..2000 {
         // Generate <a, b> and normalize.
@@ -96,7 +96,7 @@ fn lines() {
         let c = rng.gen_range(-10.0..10.0);
 
         // Generate random number of points between 50 and 1000.
-        let num = rng.gen_range(100..1000);
+        let num = rng.gen_range(50..1000);
         // The points should be no more than 5.0 away from the line and be evenly distributed away from the line.
         let residuals = Uniform::new(-5.0, 5.0);
         // The points must be generated along the line, but the distance should be bounded to make it more difficult.

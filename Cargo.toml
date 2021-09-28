@@ -16,8 +16,8 @@ sample-consensus = "1.0.1"
 rand_core = "0.6.3"
 
 [dev-dependencies]
-rand_pcg = "0.3.1"
 rand = "0.8.4"
+rand_xoshiro = "0.6.0"
 
 [profile.dev]
 opt-level = 3
