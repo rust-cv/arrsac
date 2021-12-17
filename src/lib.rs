@@ -186,6 +186,12 @@ where
             }
         }
 
+        // Bail early when no hypothesis was found.
+        // This will cause execution to terminate.
+        if hypotheses.is_empty() {
+            return (hypotheses, 0.0);
+        }
+
         // Sort the hypotheses by their inliers.
         hypotheses.sort_unstable_by_key(|&(_, inliers)| Reverse(inliers));
 
