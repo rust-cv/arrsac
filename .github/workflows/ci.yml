@@ -53,6 +53,11 @@ jobs:
           target: armv7a-none-eabi
           override: true
 
+      - name: Set up cache
+        uses: Swatinem/rust-cache@v1
+        with:
+          cache-on-failure: true
+
       - name: Build binary for armv7a-none-eabi
         uses: actions-rs/cargo@v1
         with:
@@ -72,6 +77,11 @@ jobs:
           profile: minimal
           toolchain: beta
           override: true
+
+      - name: Set up cache
+        uses: Swatinem/rust-cache@v1
+        with:
+          cache-on-failure: true
 
       - name: Run cargo test
         uses: actions-rs/cargo@v1
