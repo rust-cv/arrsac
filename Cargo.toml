@@ -2,7 +2,7 @@
 name = "arrsac"
 version = "0.10.0"
 authors = ["Geordon Worley <vadixidav@gmail.com>"]
-edition = "2018"
+edition = "2021"
 description = "From the paper \"A Comparative Analysis of RANSAC Techniques Leading to Adaptive Real-Time Random Sample Consensus\""
 documentation = "https://docs.rs/arrsac/"
 repository = "https://github.com/rust-cv/arrsac"
