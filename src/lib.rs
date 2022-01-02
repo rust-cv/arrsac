@@ -66,6 +66,7 @@ where
     /// Number of models generated in the initial step when epsilon and delta are being estimated.
     ///
     /// Default: `256`
+    #[must_use]
     pub fn initialization_hypotheses(self, initialization_hypotheses: usize) -> Self {
         Self {
             initialization_hypotheses,
@@ -78,6 +79,7 @@ where
     /// an initial epsilon and delta, which were suggested by the paper.
     ///
     /// Default: `4`
+    #[must_use]
     pub fn initialization_blocks(self, initialization_blocks: usize) -> Self {
         Self {
             initialization_blocks,
@@ -91,6 +93,7 @@ where
     /// hypotheses retained is `max_candidate_hypotheses >> n`.
     ///
     /// Default: `64`
+    #[must_use]
     pub fn max_candidate_hypotheses(self, max_candidate_hypotheses: usize) -> Self {
         Self {
             max_candidate_hypotheses,
@@ -102,6 +105,7 @@ where
     /// for each block of data evaluated
     ///
     /// Default: `64`
+    #[must_use]
     pub fn estimations_per_block(self, estimations_per_block: usize) -> Self {
         Self {
             estimations_per_block,
@@ -112,6 +116,7 @@ where
     /// Number of data points evaluated before more hypotheses are generated
     ///
     /// Default: `64`
+    #[must_use]
     pub fn block_size(self, block_size: usize) -> Self {
         Self { block_size, ..self }
     }
@@ -129,6 +134,7 @@ where
     /// that a good model is rejected.
     ///
     /// Default: `1e3`
+    #[must_use]
     pub fn likelihood_ratio_threshold(self, likelihood_ratio_threshold: f32) -> Self {
         Self {
             likelihood_ratio_threshold,
@@ -137,6 +143,7 @@ where
     }
 
     /// Residual threshold for determining if a data point is an inlier or an outlier of a model
+    #[must_use]
     pub fn inlier_threshold(self, inlier_threshold: f64) -> Self {
         Self {
             inlier_threshold,
