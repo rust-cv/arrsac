@@ -13,11 +13,11 @@ readme = "README.md"
 
 [dependencies]
 sample-consensus = "1.0.1"
-rand_core = "0.6.3"
+rand_core = "0.9"
 
 [dev-dependencies]
-rand = "0.8.4"
-rand_xoshiro = "0.6.0"
+rand = "0.9"
+rand_xoshiro = "0.7"
 
 [profile.dev]
 opt-level = 3

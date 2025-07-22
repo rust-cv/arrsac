@@ -3,7 +3,7 @@ use rand::SeedableRng;
 use rand_xoshiro::Xoshiro256PlusPlus;
 use sample_consensus::{Consensus, Estimator, Model};
 
-pub struct Unsolvable(f64);
+pub struct Unsolvable(#[allow(dead_code)] f64);
 
 impl Model<i32> for Unsolvable {
     fn residual(&self, _data: &i32) -> f64 {

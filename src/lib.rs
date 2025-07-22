@@ -378,7 +378,7 @@ where
             }
         }
 
-        (inliers >= minimum_samples).then(|| inliers)
+        (inliers >= minimum_samples).then_some(inliers)
     }
 
     /// Determines the number of inliers a model has.
