@@ -91,7 +91,8 @@ fn lines() {
 
     for _ in 0..2000 {
         // Generate <a, b> and normalize.
-        let norm = Vector2::new(rng.random_range(-10.0..10.0), rng.random_range(-10.0..10.0)).normalize();
+        let norm =
+            Vector2::new(rng.random_range(-10.0..10.0), rng.random_range(-10.0..10.0)).normalize();
         // Get parallel ray.
         let ray = Vector2::new(norm.y, -norm.x);
         // Generate random c.
